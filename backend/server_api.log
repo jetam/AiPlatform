@@ -2,14 +2,41 @@ start server
 Received file: ADELINE.MID
 Size of midi file: 7570
 Parsing MIDI from memory...
-INFO:     127.0.0.1:41558 - "POST /api/music/midi/upload HTTP/1.1" 200 OK
-INFO:     127.0.0.1:41558 - "GET /api/music/model/selection HTTP/1.1" 200 OK
-INFO:     127.0.0.1:41558 - "OPTIONS /api/music/model/select HTTP/1.1" 200 OK
-Loading RNN
-[fine-tune] epoch 1 | loss 27.0392
-[fine-tune] epoch 2 | loss 26.2433
+INFO:     127.0.0.1:57210 - "POST /api/music/midi/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57210 - "GET /api/music/model/selection HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57210 - "OPTIONS /api/music/model/select HTTP/1.1" 200 OK
+Loading Transformer 2
+[fine-tune] epoch 1 | loss 9.2056
+[fine-tune] epoch 2 | loss 8.8261
 end of selectModel. Fine tuning complete
-INFO:     127.0.0.1:41558 - "PUT /api/music/model/select HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57210 - "PUT /api/music/model/select HTTP/1.1" 200 OK
 Generating Music begin
 Generating Music end
-INFO:     127.0.0.1:57522 - "POST /api/music/generate HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33338 - "POST /api/music/generate HTTP/1.1" 200 OK
+Received file: Prelude in C sharp minor - Morceaux de fantasie.mid
+Size of midi file: 20446
+Parsing MIDI from memory...
+INFO:     127.0.0.1:46008 - "POST /api/music/midi/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46008 - "GET /api/music/model/selection HTTP/1.1" 200 OK
+Loading Transformer 2
+[fine-tune] epoch 1 | loss 13.6259
+[fine-tune] epoch 2 | loss 13.5189
+end of selectModel. Fine tuning complete
+INFO:     127.0.0.1:46008 - "PUT /api/music/model/select HTTP/1.1" 200 OK
+Generating Music begin
+Generating Music end
+INFO:     127.0.0.1:36364 - "POST /api/music/generate HTTP/1.1" 200 OK
+Received file: reverie.mid
+Size of midi file: 5818
+Parsing MIDI from memory...
+INFO:     127.0.0.1:36234 - "POST /api/music/midi/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36234 - "GET /api/music/model/selection HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36234 - "OPTIONS /api/music/model/select HTTP/1.1" 200 OK
+Loading Transformer 2
+[fine-tune] epoch 1 | loss 6.0859
+[fine-tune] epoch 2 | loss 6.1675
+end of selectModel. Fine tuning complete
+INFO:     127.0.0.1:36234 - "PUT /api/music/model/select HTTP/1.1" 200 OK
+Generating Music begin
+Generating Music end
+INFO:     127.0.0.1:60060 - "POST /api/music/generate HTTP/1.1" 200 OK

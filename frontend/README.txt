@@ -2,6 +2,9 @@ MyProject:
 
 train models: python3 -m music.ml.train    // run from backend dir!
 
+pip install torch numpy mido python-rtmidi
+
+
 run servers with ./startServer.sh
 
         access frontend on localhost: file:///home/matej/code/MyProject/frontend/index.html

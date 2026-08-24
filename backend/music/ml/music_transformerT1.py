@@ -23,7 +23,7 @@ from .music_config import (
     MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION,
 )
 
-TOKEN_VOCAB = PITCH_VOCAB * VEL_VOCAB * DT_VOCAB  # 19584
+TOKEN_VOCAB = PITCH_VOCAB * VEL_VOCAB * DT_VOCAB
 
 MAX_SEQ_LEN = 512
 
@@ -148,6 +148,8 @@ class RelativeTransformerLayer(nn.Module):
 
 
 class MusicTransformerT1(BaseMusicModel):
+    COND_DIM = 32
+
     def __init__(self, d_model=256, nhead=8, num_layers=6, dropout=0.1):
         super().__init__()
 
@@ -160,28 +162,55 @@ class MusicTransformerT1(BaseMusicModel):
         ])
         self.norm = nn.LayerNorm(d_model)
 
+        # heads are chained via the chain rule so each field conditions on
+        # the ones already decided for the same note: pc -> po -> v -> dt
+        d_cond = self.COND_DIM
+        self.pc_cond = nn.Embedding(PITCH_CLASS_VOCAB, d_cond)
+        self.po_cond = nn.Embedding(OCTAVE_VOCAB, d_cond)
+        self.v_cond  = nn.Embedding(VEL_VOCAB, d_cond)
+
         self.out_pc = nn.Linear(d_model, PITCH_CLASS_VOCAB)
-        self.out_po = nn.Linear(d_model, OCTAVE_VOCAB)
-        self.out_v  = nn.Linear(d_model, VEL_VOCAB)
-        self.out_d  = nn.Linear(d_model, DT_VOCAB)
+        self.out_po = nn.Linear(d_model + d_cond,     OCTAVE_VOCAB)
+        self.out_v  = nn.Linear(d_model + d_cond * 2, VEL_VOCAB)
+        self.out_d  = nn.Linear(d_model + d_cond * 3, DT_VOCAB)
 
     def causal_mask(self, T, device):
         return torch.triu(torch.ones(T, T, device=device), diagonal=1).bool()
 
-    def forward(self, tokens, rel_pitch):
+    def encode(self, tokens, rel_pitch):
         x = self.tok_emb(tokens) + self.rel_pitch_emb(rel_pitch)
 
         mask = self.causal_mask(x.size(1), x.device)
         for layer in self.layers:
             x = layer(x, mask)
 
-        x = self.norm(x)
-        return (
-            self.out_pc(x),
-            self.out_po(x),
-            self.out_v(x),
-            self.out_d(x),
-        )
+        return self.norm(x)
+
+    def decode_heads(self, h, pc=None, po=None, v=None):
+        # p(pc,po,v,dt|h) = p(pc|h) p(po|h,pc) p(v|h,pc,po) p(dt|h,pc,po,v)
+        # pc/po/v are ground-truth tensors for teacher forcing; if omitted,
+        # each head falls back to its own argmax. compose() does its own
+        # top-p sampling between head calls instead of relying on that
+        # fallback.
+        pc_logits = self.out_pc(h)
+        pc_in = pc if pc is not None else pc_logits.argmax(-1)
+        h_po = torch.cat([h, self.pc_cond(pc_in)], dim=-1)
+
+        po_logits = self.out_po(h_po)
+        po_in = po if po is not None else po_logits.argmax(-1)
+        h_v = torch.cat([h_po, self.po_cond(po_in)], dim=-1)
+
+        v_logits = self.out_v(h_v)
+        v_in = v if v is not None else v_logits.argmax(-1)
+        h_d = torch.cat([h_v, self.v_cond(v_in)], dim=-1)
+
+        d_logits = self.out_d(h_d)
+
+        return pc_logits, po_logits, v_logits, d_logits
+
+    def forward(self, tokens, rel_pitch, pc=None, po=None, v=None):
+        h = self.encode(tokens, rel_pitch)
+        return self.decode_heads(h, pc=pc, po=po, v=v)
 
     def fineTune(self, song):
         fineTune(self, song)
@@ -231,7 +260,7 @@ def train(model, songs, epochs=5, batch_size=8, lr=3e-4, warmup_steps=500):
                 y_v.to(DEVICE),  y_d.to(DEVICE)
             )
 
-            logits = model(x_tok, x_rel)
+            logits = model(x_tok, x_rel, pc=y_pc, po=y_po, v=y_v)
             loss   = loss_fn(logits, (y_pc, y_po, y_v, y_d))
 
             opt.zero_grad()
@@ -285,7 +314,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=4, lr=1e-5):
                 y_v.to(DEVICE), y_d.to(DEVICE)
             )
 
-            logits = model(x_tok, x_rel)
+            logits = model(x_tok, x_rel, pc=y_pc, po=y_po, v=y_v)
             loss = loss_fn(logits, (y_pc, y_po, y_v, y_d))
 
             opt.zero_grad()
@@ -342,12 +371,27 @@ def compose(model, seedSong, length=200, temperature=1.0, top_p=0.9):
         rel[:, 1:] = pitches[:, 1:] - pitches[:, :-1]
         rel = torch.clamp(rel + 64, 0, 127)
 
-        lpc, lpo, lv, ld = model(tokens, rel)
+        h = model.encode(tokens, rel)
+        h_last = h[:, -1:, :]  # [1, 1, d_model] — only the next note matters
 
-        pc    = sample(lpc)           # 0-11
-        po    = sample(lpo)           # 0-10
-        vel   = sample(lv)            # 0-8
-        dt    = sample(ld)            # 0-16
+        pc_logits = model.out_pc(h_last)
+        pc = sample(pc_logits)                                              # 0-11
+        pc_t = torch.tensor([[pc]], dtype=torch.long, device=DEVICE)
+        h_po = torch.cat([h_last, model.pc_cond(pc_t)], dim=-1)
+
+        po_logits = model.out_po(h_po)
+        po = sample(po_logits)                                              # 0-10
+        po_t = torch.tensor([[po]], dtype=torch.long, device=DEVICE)
+        h_v = torch.cat([h_po, model.po_cond(po_t)], dim=-1)
+
+        v_logits = model.out_v(h_v)
+        vel = sample(v_logits)                                              # 0-8
+        v_t = torch.tensor([[vel]], dtype=torch.long, device=DEVICE)
+        h_d = torch.cat([h_v, model.v_cond(v_t)], dim=-1)
+
+        d_logits = model.out_d(h_d)
+        dt = sample(d_logits)                                               # 0 to DT_VOCAB-1
+
         pitch = min(pc + po * 12, 127)
 
         next_tok   = torch.tensor([[encode_token(pitch, vel, dt)]], dtype=torch.long, device=DEVICE)

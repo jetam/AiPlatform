@@ -4,7 +4,6 @@ from . import midi_parser as Parser
 from . import midi_tester
 
 from ..ml import rnn
-from ..ml import music_transformer as tr0
 from ..ml import music_transformerT1 as tr1
 from ..ml import music_transformerT2 as tr2
 
@@ -12,7 +11,6 @@ import io
 
 class ModelNames(Enum):
     RNN = "rnn"
-    TRANSFORMER0 = "transformer0"
     TRANSFORMER1 = "transformer1"
     TRANSFORMER2 = "transformer2"
 
@@ -37,10 +35,6 @@ class Composer:
             case ModelNames.RNN:
                 print("Loading RNN")
                 return rnn.loadModel()
-
-            case ModelNames.TRANSFORMER0:
-                print("Loading Transformer 0")
-                return tr0.loadModel()
 
             case ModelNames.TRANSFORMER1:
                 print("Loading Transformer 1")
@@ -69,6 +63,10 @@ class Composer:
 
         self.currentSong = parser.midi_data
         # self.currentModel.fineTune(self.currentSong)
+
+        # todo: save tempo of fine tune song
+
+
 
     def generateMusic(self):
         print("Generating Music begin")

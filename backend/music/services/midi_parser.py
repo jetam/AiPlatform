@@ -15,7 +15,6 @@ MAX_MIDI_VELOCITY = 127
 # INFO: Tempo is put into times. Every MIDI event has time. the time difference between events is time * current relativeTempo
 
 
-
 class MidiParser:
     def __init__(self, MAX_VELOCITY = music_config.MAX_VELOCITY, MAX_TIME = music_config.MAX_TIME, MAX_DURATION=music_config.MAX_DURATION, MAX_PITCH=music_config.MAX_PITCH ):
         self.MAX_VELOCITY = MAX_VELOCITY
@@ -95,6 +94,8 @@ class MidiParser:
             t = min(data[2], maxTime)
             data[2] = int(self.MAX_TIME * t // maxTime)
 
+        # todo: note times should be embeded relative to the average tempo!
+
         # if isinstance(midi_file_path, (str, os.PathLike)):
         #     test_name = os.path.basename(midi_file_path)
         # else:
@@ -135,3 +136,6 @@ def readMidiFiles(midiDir):
         # break # test delete
 
     return songs
+
+# todo: generated notes dont have offnotes? - see https://spessasus.github.io/SpessaSynth/
+# make notes turn off after some time!
