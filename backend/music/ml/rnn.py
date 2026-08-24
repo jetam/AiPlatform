@@ -15,7 +15,7 @@ MODEL_DIR = "./music/trained_models/rnn"
 MODEL_NUM = 1
 
 from .music_config import (
-    PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB,
+    PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
     MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION,
 )
 
@@ -42,7 +42,7 @@ class MusicDataset(Dataset):
         seq = song[start:start + self.seq_len]
 
         notes = [n[0] for n in seq]
-        others = [(n[1], n[2]) for n in seq]
+        others = [(n[1], n[2], n[3]) for n in seq]
 
         return notes, others
 
@@ -66,6 +66,7 @@ class MusicRNN(BaseMusicModel):
         octave_vocab=11,
         vel_vocab=VEL_VOCAB,
         dt_vocab=DT_VOCAB,
+        sus_vocab=SUS_VOCAB,
         hidden_size=256, # number of features (or dimensions) in the hidden state vector
         num_layers=2,
         dropout=0.1,
@@ -76,10 +77,11 @@ class MusicRNN(BaseMusicModel):
         self.oct_emb = nn.Embedding(octave_vocab, 16)
         self.vel_emb = nn.Embedding(vel_vocab, 8)
         self.dt_emb = nn.Embedding(dt_vocab, 8)
+        self.sus_emb = nn.Embedding(sus_vocab, 8)
 
         self.dropout = nn.Dropout(dropout)
 
-        self.event_proj = nn.Linear(48, hidden_size)
+        self.event_proj = nn.Linear(56, hidden_size)
 
         self.rnn = nn.LSTM(
             hidden_size,
@@ -93,6 +95,7 @@ class MusicRNN(BaseMusicModel):
         self.oct_head = nn.Linear(hidden_size, octave_vocab)
         self.vel_head = nn.Linear(hidden_size, vel_vocab)
         self.dt_head = nn.Linear(hidden_size, dt_vocab)
+        self.sus_head = nn.Linear(hidden_size, sus_vocab)
 
     def forward(self, notes, others):
 
@@ -101,12 +104,14 @@ class MusicRNN(BaseMusicModel):
 
         vel = others[:, :, 0].long()
         dt  = others[:, :, 1].long()
+        sus = others[:, :, 2].long()
 
         x = torch.cat([
             self.pc_emb(pc),
             self.oct_emb(octv),
             self.vel_emb(vel),
-            self.dt_emb(dt)
+            self.dt_emb(dt),
+            self.sus_emb(sus)
         ], dim=-1)
 
         x = self.dropout(x)
@@ -120,7 +125,8 @@ class MusicRNN(BaseMusicModel):
             self.pc_head(out),
             self.oct_head(out),
             self.vel_head(out),
-            self.dt_head(out)
+            self.dt_head(out),
+            self.sus_head(out)
         )
 
     def fineTune(self, song):
@@ -141,12 +147,13 @@ def train(model, dataloader, epochs=3, lr=1e-3): # todo: what is lr
 
         for notes, others in dataloader:
 
-            pc_logits, oct_logits, vel_logits, dt_logits = model(notes, others)
+            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others)
             # shapes:
             # pc_logits(B, T, 12) # todo what is B, T
             # oct_logits(B, T, 11)
             # vel_logits(B, T, 9)
             # dt_logits(B, T, 17)
+            # sus_logits(B, T, 2)
 
             pc = notes % 12
             octv = notes // 12
@@ -164,7 +171,12 @@ def train(model, dataloader, epochs=3, lr=1e-3): # todo: what is lr
                 others[:, 1:, 1].reshape(-1)
             )
 
-            loss = 2 * loss_pc + loss_oct + loss_vel + loss_dt
+            loss_sus = ce(
+                sus_logits[:, :-1].reshape(-1, sus_logits.size(-1)),
+                others[:, 1:, 2].reshape(-1)
+            )
+
+            loss = 2 * loss_pc + loss_oct + loss_vel + loss_dt + loss_sus
 
             opt.zero_grad()
             loss.backward()
@@ -221,7 +233,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
 
         for notes, others in loader:
 
-            pc_logits, oct_logits, vel_logits, dt_logits = model(notes, others)
+            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others)
 
             # split ground truth
             pc = notes % 12
@@ -247,7 +259,12 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
                 others[:, 1:, 1].reshape(-1)
             )
 
-            loss = 2 * loss_pc + loss_oct + loss_vel + loss_dt
+            loss_sus = loss_fn(
+                sus_logits[:, :-1].reshape(-1, sus_logits.size(-1)),
+                others[:, 1:, 2].reshape(-1)
+            )
+
+            loss = 2 * loss_pc + loss_oct + loss_vel + loss_dt + loss_sus
 
             optimizer.zero_grad()
             loss.backward()
@@ -270,7 +287,7 @@ def compose(model, seedSong, length=100):
     seedSong = seedSong[:SEED_NOTES]
 
     seq_notes = [n[0] for n in seedSong]
-    seq_others = [[n[1], n[2]] for n in seedSong]
+    seq_others = [[n[1], n[2], n[3]] for n in seedSong]
 
     generated = []
 
@@ -283,19 +300,20 @@ def compose(model, seedSong, length=100):
         n = torch.tensor([seq_notes], dtype=torch.long)
         o = torch.tensor([seq_others], dtype=torch.long)
 
-        pc_logits, oct_logits, vel_logits, dt_logits = model(n, o) # predicted distributions for each time step
+        pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(n, o) # predicted distributions for each time step
 
         pc = sample(pc_logits[:, -1])
         octv = sample(oct_logits[:, -1])
         vel = sample(vel_logits[:, -1])
         dt = sample(dt_logits[:, -1])
+        sus = sample(sus_logits[:, -1])
 
-        next_note = octv * 12 + pc
+        next_note = min(octv * 12 + pc, 127)
 
-        generated.append((next_note, vel, dt))
+        generated.append((next_note, vel, dt, sus))
 
         seq_notes.append(next_note) # update context
-        seq_others.append([vel, dt])
+        seq_others.append([vel, dt, sus])
 
         # keep context stable
         if len(seq_notes) > SEQUENCE_LENGTH:

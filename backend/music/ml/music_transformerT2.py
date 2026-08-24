@@ -19,41 +19,43 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 
 from .music_config import (
-    PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB,
+    PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
     MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION,
 )
 
-# REMI-style token layout — each note produces 3 tokens in sequence
+# REMI-style token layout — each note produces 4 tokens in sequence
 PAD       = 0
 BOS       = 1
 PITCH_OFF = 2                          # tokens  2..129  (128 pitches)
 VEL_OFF   = PITCH_OFF + PITCH_VOCAB    # tokens 130..138  (9 velocities)
 DT_OFF    = VEL_OFF + VEL_VOCAB        # tokens 139..202  (64 dt values)
-VOCAB_SIZE = DT_OFF + DT_VOCAB
+SUS_OFF   = DT_OFF + DT_VOCAB          # tokens 203..204  (2 sustain states)
+VOCAB_SIZE = SUS_OFF + SUS_VOCAB
 
 # Token type IDs
-T_PITCH, T_VEL, T_DT = 0, 1, 2
-TYPE_CYCLE = [T_PITCH, T_VEL, T_DT]
+T_PITCH, T_VEL, T_DT, T_SUS = 0, 1, 2, 3
+TYPE_CYCLE = [T_PITCH, T_VEL, T_DT, T_SUS]
 
 # Valid token index range per type — used to mask sampling
 VALID_RANGE = {
     T_PITCH: (PITCH_OFF, PITCH_OFF + PITCH_VOCAB),
     T_VEL:   (VEL_OFF,   VEL_OFF   + VEL_VOCAB),
-    T_DT:    (DT_OFF,    DT_OFF    + DT_VOCAB),
+    T_DT:    (DT_OFF,    DT_OFF   + DT_VOCAB),
+    T_SUS:   (SUS_OFF,   SUS_OFF   + SUS_VOCAB),
 }
 
-MAX_SEQ_LEN = 1024  # tokens (~341 notes)
+MAX_SEQ_LEN = 1024  # tokens (~256 notes)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def encode_note(pitch: int, vel: int, dt: int):
-    """One note → 3 REMI tokens."""
-    return [PITCH_OFF + pitch, VEL_OFF + vel, DT_OFF + dt]
+def encode_note(pitch: int, vel: int, dt: int, sustain: int):
+    """One note → 4 REMI tokens."""
+    return [PITCH_OFF + pitch, VEL_OFF + vel, DT_OFF + dt, SUS_OFF + sustain]
 
 
-def decode_note(pitch_tok: int, vel_tok: int, dt_tok: int):
-    return (pitch_tok - PITCH_OFF, vel_tok - VEL_OFF, dt_tok - DT_OFF)
+def decode_note(pitch_tok: int, vel_tok: int, dt_tok: int, sus_tok: int):
+    return (pitch_tok - PITCH_OFF, vel_tok - VEL_OFF, dt_tok - DT_OFF, sus_tok - SUS_OFF)
 
 
 class MusicDataset(Dataset):
@@ -77,9 +79,9 @@ class MusicDataset(Dataset):
         # pitch transposition augmentation
         shift = random.randint(-6, 6)
         if shift != 0:
-            chunk = [(max(0, min(127, p + shift)), v, d) for p, v, d in chunk]
+            chunk = [(max(0, min(127, p + shift)), v, d, s) for p, v, d, s in chunk]
 
-        # tokenize: (notes_per_chunk+1) notes → (notes_per_chunk+1)*3 tokens
+        # tokenize: (notes_per_chunk+1) notes → (notes_per_chunk+1)*4 tokens
         toks = []
         for note in chunk:
             toks.extend(encode_note(*note))
@@ -89,7 +91,7 @@ class MusicDataset(Dataset):
         y = torch.tensor(toks[1:], dtype=torch.long)
 
         # token type for every position in x (always aligned to note boundary)
-        x_types = torch.tensor([TYPE_CYCLE[i % 3] for i in range(len(x))], dtype=torch.long)
+        x_types = torch.tensor([TYPE_CYCLE[i % len(TYPE_CYCLE)] for i in range(len(x))], dtype=torch.long)
 
         return (x, x_types), y
 
@@ -210,7 +212,7 @@ class MusicTransformerT2(BaseMusicModel):
         super().__init__()
 
         self.tok_emb  = nn.Embedding(VOCAB_SIZE, d_model)
-        self.type_emb = nn.Embedding(3, d_model)
+        self.type_emb = nn.Embedding(len(TYPE_CYCLE), d_model)
 
         self.layers = nn.ModuleList([
             TransformerLayer(d_model, nhead, dropout) for _ in range(num_layers)
@@ -414,7 +416,7 @@ def compose(model, seedSong, length=200, temperature=1.0, top_p=0.9, rep_penalty
 
     seed_tokens = torch.tensor(seed_toks, dtype=torch.long, device=DEVICE).unsqueeze(0)
     seed_types = torch.tensor(
-        [TYPE_CYCLE[i % 3] for i in range(len(seed_toks))],
+        [TYPE_CYCLE[i % len(TYPE_CYCLE)] for i in range(len(seed_toks))],
         dtype=torch.long, device=DEVICE
     ).unsqueeze(0)
 
@@ -456,8 +458,8 @@ def compose(model, seedSong, length=200, temperature=1.0, top_p=0.9, rep_penalty
             step_logits, cache = model(tok_tensor, type_tensor, cache=cache)
             next_logits = step_logits[0, -1].clone()
 
-        pitch, vel, dt = decode_note(*note_toks)
-        generated_notes.append((pitch, vel, dt))
+        pitch, vel, dt, sus = decode_note(*note_toks)
+        generated_notes.append((pitch, vel, dt, sus))
         recent_pitches = (recent_pitches + [pitch])[-32:]
 
     return list(seedSong) + generated_notes

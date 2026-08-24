@@ -16,11 +16,12 @@ MAX_MIDI_VELOCITY = 127
 
 
 class MidiParser:
-    def __init__(self, MAX_VELOCITY = music_config.MAX_VELOCITY, MAX_TIME = music_config.MAX_TIME, MAX_DURATION=music_config.MAX_DURATION, MAX_PITCH=music_config.MAX_PITCH ):
+    def __init__(self, MAX_VELOCITY = music_config.MAX_VELOCITY, MAX_TIME = music_config.MAX_TIME, MAX_DURATION=music_config.MAX_DURATION, MAX_PITCH=music_config.MAX_PITCH, MAX_SUSTAIN=music_config.MAX_SUSTAIN ):
         self.MAX_VELOCITY = MAX_VELOCITY
         self.MAX_TIME = MAX_TIME
         self.MAX_DURATION = MAX_DURATION
         self.MAX_PITCH = MAX_PITCH
+        self.MAX_SUSTAIN = MAX_SUSTAIN
 
 
     # convert MIDI into feature vectors: pitch, velocity, time. Time = time since previous note started
@@ -37,15 +38,15 @@ class MidiParser:
 
         maxTime = 0.0 # time needs to be quantized.
 
-        startTempo = -1
-        currentTempo = 1
+        startTempo = 500000 # default tempo
+        currentTempo = startTempo # todo: need start and current?
         previousTime = 0
         relativeTempo = 1
 
-        for msg in mid:
-            # print( "        Midi msg: " + str(msg) )
-            # todo: handle different channels? - have option to set only main channel
+        volume = 100 # default values
+        sustain = 0
 
+        for msg in mid:
             noteType = msg.type
 
             if( not startTime and noteType == "note_on" ):
@@ -55,18 +56,18 @@ class MidiParser:
                 current_time += msg.time
 
             if noteType == 'set_tempo':
-                # print("tempo change!!!!: ", msg.tempo)
-                if startTempo == -1:
-                    startTempo = msg.tempo
                 currentTempo = msg.tempo
 
             if noteType != 'note_on' and noteType != 'note_off':
+                if( noteType != 'control_change' ):
+                    continue
 
-                self.meta_data.append( msg )
-                # todo: include control change 64. (sustain). also check if note numbering is ok. include sustain in midi_data
-                # todo: also include cc 7 (volume)
-                # todo: set tempo:  Midi msg: MetaMessage('set_tempo', tempo=983606, time=0.03225803333333333)
-                # todo: tempo change can be put in times. read start tempo in beginning. then change times: time = time * startTempo/currentTempo
+                if( msg.control == 7 ):
+                    volume = msg.value
+
+                if( msg.control == 64 ):
+                    sustain = msg.value
+
                 continue
 
             if msg.velocity == 0 and noteType == 'note_on':
@@ -78,12 +79,16 @@ class MidiParser:
             deltaTime = ( current_time - previousTime ) * relativeTempo
             previousTime = current_time
 
-            velocity = ( msg.velocity // ( MAX_MIDI_VELOCITY // self.MAX_VELOCITY ) )  # max is 8
+            # fold channel volume (CC7) into note velocity as a single "effective loudness" value
+            combinedVelocity = min(MAX_MIDI_VELOCITY, ( msg.velocity * volume ) // MAX_MIDI_VELOCITY )
+            velocity = ( combinedVelocity // ( MAX_MIDI_VELOCITY // self.MAX_VELOCITY ) )  # max is 8
+
+            sustainBin = 1 if sustain >= 64 else 0  # CC64 convention: >=64 is pedal-down
 
             if( maxTime < deltaTime ):
                 maxTime = deltaTime
 
-            self.midi_data.append([msg.note, velocity, deltaTime])  # ( note, velocity, delta time )
+            self.midi_data.append([msg.note, velocity, deltaTime, sustainBin])  # ( note, velocity, delta time, sustain )
 
             relativeTempo = startTempo / currentTempo
 
@@ -93,8 +98,6 @@ class MidiParser:
             # print("data:", data)
             t = min(data[2], maxTime)
             data[2] = int(self.MAX_TIME * t // maxTime)
-
-        # todo: note times should be embeded relative to the average tempo!
 
         # if isinstance(midi_file_path, (str, os.PathLike)):
         #     test_name = os.path.basename(midi_file_path)
@@ -109,14 +112,13 @@ class MidiParser:
 
 
     def convertedNotes(self, generatedNotes): # todo: this is used after transformer. make so everything is universal
-        # print( "in convertedNotes" )
         converted = []
-        for p, v, dt in generatedNotes:
+        for p, v, dt, sustain in generatedNotes:
             velocity = v * (MAX_MIDI_VELOCITY // self.MAX_VELOCITY)
             time = dt * music_config.DT_MAX_SECONDS / self.MAX_TIME
-            converted.append((p, velocity, time))
+            sustainValue = sustain * MAX_MIDI_VELOCITY  # binary -> 0 or 127
+            converted.append((p, velocity, time, sustainValue))
 
-        # print("end of ConvertedNotes")
         return converted
 
 def readMidiFiles(midiDir):

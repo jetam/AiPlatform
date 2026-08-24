@@ -5,23 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="3327a86f-5f7c-4ed2-b59e-e239d46e63b0" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/AiPlatform.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/MyProject.iml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/backend.iml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/editor.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/ml/music_transformer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/ml/music_transformerT1.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/ml/music_transformerT1.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/ml/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/ml/train.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/services/composer.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/services/composer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/music/ml/music_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/ml/music_config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/music/services/midi_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/services/midi_parser.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/trained_models/transformer0/pretrained1.pt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/trained_models/transformer1/pretrained1.pt" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/trained_models/transformer1/pretrained1.pt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/music/services/midi_tester.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/services/midi_tester.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/server_api.log" beforeDir="false" afterPath="$PROJECT_DIR$/backend/server_api.log" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/README.txt" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/README.txt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

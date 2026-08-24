@@ -47,18 +47,16 @@ def _build_midi_file(notes):
     # ----------------------------
     events = []
     current_time = 0
+    last_sustain = None
 
-    for note, velocity, delta_time in notes:
+    for note, velocity, delta_time, sustain in notes:
 
-        # print( "delta_time12333333: ", delta_time )
         current_time += sec_to_ticks(delta_time)
-        # current_time += delta_time
-
-
         start = current_time
-        # end = start + sec_to_ticks(duration)
-        # end = start + duration
 
+        if sustain != last_sustain:
+            events.append((start, 'control_change', 64, sustain))
+            last_sustain = sustain
 
         events.append((start, 'note_on', note, velocity))
         events.append((1, 'note_off', note, 0)) # todo: 1 is duration. is this ok?
@@ -73,19 +71,15 @@ def _build_midi_file(notes):
     # ----------------------------
     last_time = 0
 
-    for time, msg_type, note, velocity in events:
+    for time, msg_type, a, b in events:
 
         delta = time - last_time
         last_time = time
 
-        # print( "message: ", msg_type, note, velocity, delta )
-
-        track.append(Message(
-            msg_type,
-            note=note,
-            velocity=velocity,
-            time=delta
-        ))
+        if msg_type == 'control_change':
+            track.append(Message('control_change', control=a, value=b, time=delta))
+        else:
+            track.append(Message(msg_type, note=a, velocity=b, time=delta))
 
     return mid
 
