@@ -15,9 +15,13 @@ function hideFrom(step) {
     }
 }
 
-//  todo: response handle errors
-
 let currentFileName = "";
+const defaultDropzoneText = dropzone.textContent;
+
+function showError(message) {
+    console.error(message);
+    alert(message);
+}
 
 function onGenerated(blob) {
     downloadButton.classList.remove("d-none");
@@ -42,20 +46,27 @@ async function uploadMIDI( midiFile ) {
     const formData = new FormData();
     formData.append("midiFile", midiFile);
 
-    console.log( "before post" );
-
     let response = await apiFetch("/api/music/midi/upload", {
         method: "POST",
-        body: formData // todo: also send selected model
+        body: formData
     });
 
+    if ( !response.ok ) {
+        throw new Error(`Upload failed (${response.status})`);
+    }
+
     const res = await response.json();
-        console.log( "midiii res:" );
+        console.log( "uploadMIDI: result:" );
         console.log( res );
 }
 
 async function fetchModels() {
     let response = await apiFetch("/api/music/model/selection");
+
+    if ( !response.ok ) {
+        throw new Error(`Failed to load models (${response.status})`);
+    }
+
     const res = await response.json();
 
     modelSelect.innerHTML = "";
@@ -88,23 +99,36 @@ generateButton.addEventListener("click", async (e) => {
 
     hideFrom(downloadButton);
 
-    const response = await apiFetch("/api/music/generate", {
-        method: "POST"
-    });
+    try {
+        const response = await apiFetch("/api/music/generate", {
+            method: "POST"
+        });
 
-    const contentType = response.headers.get("content-type") || "";
+        const contentType = response.headers.get("content-type") || "";
 
-    if ( contentType.includes("application/json") ) {
-        const res = await response.json();
-        if ( res.status === "Model Not Selected" ) {
-            alert( "Model is not selected!" );
+        if ( contentType.includes("application/json") ) {
+            const res = await response.json();
+            if ( res.status === "Model Not Selected" ) {
+                showError( "Model is not selected!" );
+            } else {
+                showError( `Generation failed: ${res.detail || res.status || "unknown error"}` );
+            }
+            return;
         }
-        return;
-    }
 
-    const blob = await response.blob();
-    onGenerated( blob );
-    dropzone.textContent = currentFileName;
+        if ( !response.ok ) {
+            throw new Error(`Generation failed (${response.status})`);
+        }
+
+        const blob = await response.blob();
+        onGenerated( blob );
+        dropzone.textContent = currentFileName;
+    } catch (err) {
+        showError( "Failed to generate music: " + err.message );
+        dropzone.textContent = currentFileName;
+    } finally {
+        generateButton.classList.remove("d-none");
+    }
 });
 
 modelSelect.addEventListener("change", async (e) => {
@@ -115,25 +139,37 @@ modelSelect.addEventListener("change", async (e) => {
         <span class="ms-2">fine tuning...</span>
     `;
 
-    await apiFetch("/api/music/model/select", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model_name: e.target.value })
-    });
+    try {
+        const response = await apiFetch("/api/music/model/select", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model_name: e.target.value })
+        });
 
-    const placeholder = modelSelect.querySelector('option[value=""]');
-    if (placeholder) placeholder.remove();
+        if ( !response.ok ) {
+            throw new Error(`Model selection failed (${response.status})`);
+        }
 
-    generateButton.classList.remove("d-none");
-    dropzone.textContent = currentFileName;
+        const placeholder = modelSelect.querySelector('option[value=""]');
+        if (placeholder) placeholder.remove();
+
+        generateButton.classList.remove("d-none");
+        dropzone.textContent = currentFileName;
+    } catch (err) {
+        showError( "Failed to select/fine-tune model: " + err.message );
+        modelSelect.value = "";
+        dropzone.textContent = currentFileName;
+    }
 });
 
 dropzone.addEventListener("drop", async (e) => {
-    console.log( "file dropped" );
+
     e.preventDefault();
 
 
     const file = e.dataTransfer.files[0];
+
+    console.log( "file dropped. File name = " + file.name );
 
     const formData = new FormData();
     formData.append("file", file);
@@ -145,9 +181,15 @@ dropzone.addEventListener("drop", async (e) => {
         <span class="ms-2">fine tuning...</span>
     `;
 
-    await uploadMIDI( file );
-    await fetchModels();
-    modelSelect.classList.remove("d-none");
-    currentFileName = file.name;
-    dropzone.textContent = currentFileName;
+    try {
+        await uploadMIDI( file );
+        await fetchModels();
+        modelSelect.classList.remove("d-none");
+        currentFileName = file.name;
+        dropzone.textContent = currentFileName;
+    } catch (err) {
+        showError( "Failed to upload/process the file: " + err.message );
+        currentFileName = "";
+        dropzone.textContent = defaultDropzoneText;
+    }
 });

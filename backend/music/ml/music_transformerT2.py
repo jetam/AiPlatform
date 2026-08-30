@@ -252,8 +252,8 @@ class MusicTransformerT2(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, targetSeconds=TARGET_SECONDS):
-        return compose(self, seedSong, targetSeconds=targetSeconds)
+    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
+        return compose(self, seedSong, targetSeconds=targetSeconds, averageTime=averageTime)
 
 
 
@@ -401,7 +401,7 @@ def _nucleus_sample(logits, temperature, top_p):
 
 
 @torch.no_grad()
-def compose(model, seedSong, targetSeconds=TARGET_SECONDS, temperature=1.0, top_p=0.9, rep_penalty=1.2):
+def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0, temperature=1.0, top_p=0.9, rep_penalty=1.2):
     model.eval()
 
     seedSong = seedSong[:SEED_NOTES]
@@ -421,8 +421,15 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, temperature=1.0, top_
 
     # elapsed time (dt bins converted to approx seconds) since the start of the OUTPUT
     # piece, not the original song's own timeline - keeps a single self-consistent 0..1
-    # scale across the seed and everything generated after it
-    seconds_per_bin = DT_MAX_SECONDS / MAX_TIME
+    # scale across the seed and everything generated after it.
+    # calibrated from the seed's own bin-vs-real-seconds pace when available, so
+    # targetSeconds means real seconds instead of a fixed, uncalibrated guess
+    seed_avg_bin = sum(n[2] for n in seedSong[1:]) / max(1, len(seedSong) - 1)
+    seconds_per_bin = (
+        averageTime / seed_avg_bin
+        if (averageTime > 0 and seed_avg_bin > 0)
+        else DT_MAX_SECONDS / MAX_TIME
+    )
     elapsed = 0.0
     seed_elapsed = [0.0]
     for n in seedSong[1:]:

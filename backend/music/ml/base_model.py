@@ -13,5 +13,5 @@ class BaseMusicModel(nn.Module, ABC):
 
 
   @abstractmethod
-  def generate(self, seedSong, targetSeconds=TARGET_SECONDS): ...
+  def generate(self, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0): ...
 

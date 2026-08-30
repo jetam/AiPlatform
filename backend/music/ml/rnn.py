@@ -137,8 +137,8 @@ class MusicRNN(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, targetSeconds=TARGET_SECONDS):
-        return compose(self, seedSong, targetSeconds=targetSeconds)
+    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
+        return compose(self, seedSong, targetSeconds=targetSeconds, averageTime=averageTime)
 
 
 def train(model, dataloader, epochs=3, lr=1e-3):
@@ -284,7 +284,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
     return model
 
 @torch.no_grad() # do not compute gradients
-def compose(model, seedSong, targetSeconds=TARGET_SECONDS):
+def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
 
     model.eval()
 
@@ -295,8 +295,15 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS):
 
     # elapsed time (in dt bins converted to approx seconds) since the start of the
     # OUTPUT piece, not the original song's own timeline - keeps a single self-consistent
-    # 0..1 scale across the seed and everything generated after it
-    seconds_per_bin = DT_MAX_SECONDS / MAX_TIME
+    # 0..1 scale across the seed and everything generated after it.
+    # calibrated from the seed's own bin-vs-real-seconds pace when available, so
+    # targetSeconds means real seconds instead of a fixed, uncalibrated guess
+    seed_avg_bin = sum(n[2] for n in seedSong[1:]) / max(1, len(seedSong) - 1)
+    seconds_per_bin = (
+        averageTime / seed_avg_bin
+        if (averageTime > 0 and seed_avg_bin > 0)
+        else DT_MAX_SECONDS / MAX_TIME
+    )
     elapsed = 0.0
     seed_elapsed = [0.0]
     for n in seedSong[1:]:

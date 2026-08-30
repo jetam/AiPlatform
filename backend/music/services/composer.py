@@ -65,7 +65,7 @@ class Composer:
 
     def generateMusic(self):
         print("Generating Music begin")
-        generatedNotes = self.currentModel.generate(self.currentSong)
+        generatedNotes = self.currentModel.generate(self.currentSong, averageTime=self.averageTime)
         parser = Parser.MidiParser()
         convertedNotes = parser.convertedNotes(generatedNotes, self.averageTime)
         print("Generating Music end")
