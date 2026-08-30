@@ -16,7 +16,7 @@ MODEL_NUM = 1
 
 from .music_config import (
     PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
-    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION,
+    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, DT_MAX_SECONDS, TARGET_SECONDS,
 )
 
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -43,15 +43,17 @@ class MusicDataset(Dataset):
 
         notes = [n[0] for n in seq]
         others = [(n[1], n[2], n[3]) for n in seq]
+        times = [[n[4]] for n in seq]  # fraction of song elapsed: 0 (start) .. 1 (end)
 
-        return notes, others
+        return notes, others, times
 
 
 def collate_fn(batch):
-    notes, others = zip(*batch)
+    notes, others, times = zip(*batch)
     return (
         torch.tensor(notes, dtype=torch.long),
-        torch.tensor(others, dtype=torch.long)
+        torch.tensor(others, dtype=torch.long),
+        torch.tensor(times, dtype=torch.float32)
     )
 
 
@@ -73,15 +75,16 @@ class MusicRNN(BaseMusicModel):
     ):
         super().__init__()
 
-        self.pc_emb = nn.Embedding(pitch_class_vocab, 16) # todo: why 16
+        self.pc_emb = nn.Embedding(pitch_class_vocab, 16)
         self.oct_emb = nn.Embedding(octave_vocab, 16)
         self.vel_emb = nn.Embedding(vel_vocab, 8)
         self.dt_emb = nn.Embedding(dt_vocab, 8)
         self.sus_emb = nn.Embedding(sus_vocab, 8)
+        self.time_proj = nn.Linear(1, 8)  # continuous position-in-song: 0 (start) .. 1 (end)
 
         self.dropout = nn.Dropout(dropout)
 
-        self.event_proj = nn.Linear(56, hidden_size)
+        self.event_proj = nn.Linear(64, hidden_size)
 
         self.rnn = nn.LSTM(
             hidden_size,
@@ -97,7 +100,7 @@ class MusicRNN(BaseMusicModel):
         self.dt_head = nn.Linear(hidden_size, dt_vocab)
         self.sus_head = nn.Linear(hidden_size, sus_vocab)
 
-    def forward(self, notes, others):
+    def forward(self, notes, others, times):
 
         pc = notes % 12
         octv = notes // 12
@@ -111,7 +114,8 @@ class MusicRNN(BaseMusicModel):
             self.oct_emb(octv),
             self.vel_emb(vel),
             self.dt_emb(dt),
-            self.sus_emb(sus)
+            self.sus_emb(sus),
+            self.time_proj(times)
         ], dim=-1)
 
         x = self.dropout(x)
@@ -133,11 +137,11 @@ class MusicRNN(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, length=200):
-        return compose(self, seedSong, length=length)
+    def generate(self, seedSong, targetSeconds=TARGET_SECONDS):
+        return compose(self, seedSong, targetSeconds=targetSeconds)
 
 
-def train(model, dataloader, epochs=3, lr=1e-3): # todo: what is lr
+def train(model, dataloader, epochs=3, lr=1e-3):
 
     opt = torch.optim.Adam(model.parameters(), lr=lr) # updates weights using gradients
     ce = nn.CrossEntropyLoss() # used because all outputs are classification problems
@@ -145,11 +149,11 @@ def train(model, dataloader, epochs=3, lr=1e-3): # todo: what is lr
     for epoch in range(epochs):
         total = 0.0
 
-        for notes, others in dataloader:
+        for notes, others, times in dataloader:
 
-            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others)
+            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
             # shapes:
-            # pc_logits(B, T, 12) # todo what is B, T
+            # pc_logits(B, T, 12)
             # oct_logits(B, T, 11)
             # vel_logits(B, T, 9)
             # dt_logits(B, T, 17)
@@ -231,9 +235,9 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
     for epoch in range(epochs):
         total_loss = 0.0
 
-        for notes, others in loader:
+        for notes, others, times in loader:
 
-            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others)
+            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
 
             # split ground truth
             pc = notes % 12
@@ -280,7 +284,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
     return model
 
 @torch.no_grad() # do not compute gradients
-def compose(model, seedSong, length=100):
+def compose(model, seedSong, targetSeconds=TARGET_SECONDS):
 
     model.eval()
 
@@ -289,18 +293,33 @@ def compose(model, seedSong, length=100):
     seq_notes = [n[0] for n in seedSong]
     seq_others = [[n[1], n[2], n[3]] for n in seedSong]
 
+    # elapsed time (in dt bins converted to approx seconds) since the start of the
+    # OUTPUT piece, not the original song's own timeline - keeps a single self-consistent
+    # 0..1 scale across the seed and everything generated after it
+    seconds_per_bin = DT_MAX_SECONDS / MAX_TIME
+    elapsed = 0.0
+    seed_elapsed = [0.0]
+    for n in seedSong[1:]:
+        elapsed += n[2] * seconds_per_bin
+        seed_elapsed.append(elapsed)
+
+    seq_times = [[min(1.0, t / targetSeconds)] for t in seed_elapsed]
+
     generated = []
 
     def sample(logits, temp=0.9):
         probs = torch.softmax(logits / temp, dim=-1)
         return torch.multinomial(probs, 1).item() # Turns raw model scores into probabilities
 
-    for _ in range(length):
+    MAX_NOTES = 5000  # safety cap in case dt keeps sampling to 0 and elapsed never advances
+
+    while elapsed < targetSeconds and len(generated) < MAX_NOTES:
 
         n = torch.tensor([seq_notes], dtype=torch.long)
         o = torch.tensor([seq_others], dtype=torch.long)
+        t = torch.tensor([seq_times], dtype=torch.float32)
 
-        pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(n, o) # predicted distributions for each time step
+        pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(n, o, t) # predicted distributions for each time step
 
         pc = sample(pc_logits[:, -1])
         octv = sample(oct_logits[:, -1])
@@ -312,15 +331,20 @@ def compose(model, seedSong, length=100):
 
         generated.append((next_note, vel, dt, sus))
 
+        elapsed += dt * seconds_per_bin
+        time_value = min(1.0, elapsed / targetSeconds)
+
         seq_notes.append(next_note) # update context
         seq_others.append([vel, dt, sus])
+        seq_times.append([time_value])
 
         # keep context stable
         if len(seq_notes) > SEQUENCE_LENGTH:
             seq_notes = seq_notes[-SEQUENCE_LENGTH:]
             seq_others = seq_others[-SEQUENCE_LENGTH:]
+            seq_times = seq_times[-SEQUENCE_LENGTH:]
 
-    return list(seedSong) + generated
+    return [(n[0], n[1], n[2], n[3]) for n in seedSong] + generated
 
 def trainModel(songs):
     dataset = MusicDataset(songs, SEQUENCE_LENGTH)
@@ -340,18 +364,18 @@ def trainModel(songs):
     return model
 
 
-def composeMusic(seedSong):
-    parser = Parser.MidiParser(MAX_VELOCITY, MAX_TIME, MAX_DURATION)
-    # model = trainModel(songs)
-
-    model = loadModel()
-
-    model = fineTune(model, seedSong, epochs=2, lr=3e-5)
-
-    # seedSong = songs[0][:SEQUENCE_LENGTH]
-
-    generated = compose(model, seedSong, length=200)
-    generatedNotes = parser.convertedNotes(generated)  # todo: need this?
-    midi_tester.testMidi(generatedNotes, "midiRNN1.mid")
-
-    return generatedNotes
+# def composeMusic(seedSong):
+#     parser = Parser.MidiParser(MAX_VELOCITY, MAX_TIME, MAX_DURATION)
+#     # model = trainModel(songs)
+#
+#     model = loadModel()
+#
+#     model = fineTune(model, seedSong, epochs=2, lr=3e-5)
+#
+#     # seedSong = songs[0][:SEQUENCE_LENGTH]
+#
+#     generated = compose(model, seedSong)
+#     # generatedNotes = parser.convertedNotes(generated)
+#     # midi_tester.testMidi(generatedNotes, "midiRNN1.mid")
+#
+#     return generatedNotes

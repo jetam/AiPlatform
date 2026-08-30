@@ -14,6 +14,13 @@ MAX_MIDI_VELOCITY = 127
 
 # INFO: Tempo is put into times. Every MIDI event has time. the time difference between events is time * current relativeTempo
 
+# off-notes aren't modeled/generated - convertedNotes() derives a duration heuristically
+# instead: pedal down holds almost the whole gap to the next note (legato), pedal up
+# releases a bit earlier (detached)
+SUSTAIN_DURATION_FRACTION = 0.95
+STACCATO_DURATION_FRACTION = 0.7
+MIN_NOTE_DURATION_SECONDS = 0.05
+
 
 class MidiParser:
     def __init__(self, MAX_VELOCITY = music_config.MAX_VELOCITY, MAX_TIME = music_config.MAX_TIME, MAX_DURATION=music_config.MAX_DURATION, MAX_PITCH=music_config.MAX_PITCH, MAX_SUSTAIN=music_config.MAX_SUSTAIN ):
@@ -88,17 +95,30 @@ class MidiParser:
             if( maxTime < deltaTime ):
                 maxTime = deltaTime
 
-            self.midi_data.append([msg.note, velocity, deltaTime, sustainBin])  # ( note, velocity, delta time, sustain )
+            self.midi_data.append([msg.note, velocity, deltaTime, sustainBin, current_time])  # ( note, velocity, delta time, sustain, absolute time )
 
             relativeTempo = startTempo / currentTempo
 
         maxTime = maxTime * 0.95 # cut off too long times whet putting time into bins
 
+        self.songTime = current_time
+
+        timeSum = 0
+        count = 0
         for data in self.midi_data:
             # print("data:", data)
             t = min(data[2], maxTime)
-            data[2] = int(self.MAX_TIME * t // maxTime)
 
+            timeSum += t
+            count += 1
+
+            data[2] = int(self.MAX_TIME * t // maxTime)
+            data[4] = ( data[4] / self.songTime ) if self.songTime > 0 else 0.0  # 0 (start) .. 1 (end)
+
+        return timeSum / count # used to set the speed to original speed
+
+
+        # test:
         # if isinstance(midi_file_path, (str, os.PathLike)):
         #     test_name = os.path.basename(midi_file_path)
         # else:
@@ -111,13 +131,35 @@ class MidiParser:
         # )
 
 
-    def convertedNotes(self, generatedNotes): # todo: this is used after transformer. make so everything is universal
+    def convertedNotes(self, generatedNotes, averageTime = 0): # this is used after transformer
         converted = []
-        for p, v, dt, sustain in generatedNotes:
+        timeSum = 0
+        count = 0
+
+        for _, _, dt, _ in generatedNotes:
+            timeSum += dt
+            count += 1
+
+
+        if( timeSum <= 0 ):
+            raise ValueError( f"Time sum of generated music is 0" )
+
+        timeFactor = averageTime / (timeSum/count) if (timeSum > 0 and count > 0) else 1 # timeFactor is used to make speed of song closer to original
+
+        # real gap (seconds) since the previous note, for every note
+        times = [timeFactor * dt for _, _, dt, _ in generatedNotes]
+        fallbackDuration = averageTime if averageTime > 0 else 0.5
+
+        for i, (p, v, dt, sustain) in enumerate(generatedNotes):
             velocity = v * (MAX_MIDI_VELOCITY // self.MAX_VELOCITY)
-            time = dt * music_config.DT_MAX_SECONDS / self.MAX_TIME
+            time = times[i]
             sustainValue = sustain * MAX_MIDI_VELOCITY  # binary -> 0 or 127
-            converted.append((p, velocity, time, sustainValue))
+
+            nextGap = times[i + 1] if i + 1 < len(times) else fallbackDuration
+            fraction = SUSTAIN_DURATION_FRACTION if sustain else STACCATO_DURATION_FRACTION
+            duration = max(MIN_NOTE_DURATION_SECONDS, nextGap * fraction)
+
+            converted.append((p, velocity, time, sustainValue, duration))
 
         return converted
 
@@ -135,9 +177,7 @@ def readMidiFiles(midiDir):
             # midi_tester.testMidi( parser.convertedNotes( parser.midi_data ) )
             songs.append(parser.midi_data)
 
-        # break # test delete
-
     return songs
 
 # todo: generated notes dont have offnotes? - see https://spessasus.github.io/SpessaSynth/
-# make notes turn off after some time!
+# todo: make notes turn off after some time!

@@ -59,20 +59,15 @@ class Composer:
         print("Parsing MIDI from memory...")
 
         parser = Parser.MidiParser()
-        parser.read_midi(midi_stream)
+        self.averageTime = parser.read_midi(midi_stream)
 
         self.currentSong = parser.midi_data
-        # self.currentModel.fineTune(self.currentSong)
-
-        # todo: save tempo of fine tune song
-
-
 
     def generateMusic(self):
         print("Generating Music begin")
         generatedNotes = self.currentModel.generate(self.currentSong)
         parser = Parser.MidiParser()
-        convertedNotes = parser.convertedNotes(generatedNotes)
+        convertedNotes = parser.convertedNotes(generatedNotes, self.averageTime)
         print("Generating Music end")
         return midi_tester.midiToBytes(convertedNotes)
 

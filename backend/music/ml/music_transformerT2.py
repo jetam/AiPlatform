@@ -20,7 +20,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 from .music_config import (
     PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
-    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION,
+    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, DT_MAX_SECONDS, TARGET_SECONDS,
 )
 
 # REMI-style token layout — each note produces 4 tokens in sequence
@@ -79,12 +79,14 @@ class MusicDataset(Dataset):
         # pitch transposition augmentation
         shift = random.randint(-6, 6)
         if shift != 0:
-            chunk = [(max(0, min(127, p + shift)), v, d, s) for p, v, d, s in chunk]
+            chunk = [(max(0, min(127, p + shift)), v, d, s, tm) for p, v, d, s, tm in chunk]
 
         # tokenize: (notes_per_chunk+1) notes → (notes_per_chunk+1)*4 tokens
         toks = []
+        note_times = []
         for note in chunk:
-            toks.extend(encode_note(*note))
+            toks.extend(encode_note(*note[:4]))
+            note_times.extend([note[4]] * len(TYPE_CYCLE))
 
         # language-model shift: x predicts y
         x = torch.tensor(toks[:-1], dtype=torch.long)
@@ -92,8 +94,9 @@ class MusicDataset(Dataset):
 
         # token type for every position in x (always aligned to note boundary)
         x_types = torch.tensor([TYPE_CYCLE[i % len(TYPE_CYCLE)] for i in range(len(x))], dtype=torch.long)
+        x_times = torch.tensor(note_times[:-1], dtype=torch.float32).unsqueeze(-1)
 
-        return (x, x_types), y
+        return (x, x_types, x_times), y
 
 
 class RMSNorm(nn.Module):
@@ -213,6 +216,7 @@ class MusicTransformerT2(BaseMusicModel):
 
         self.tok_emb  = nn.Embedding(VOCAB_SIZE, d_model)
         self.type_emb = nn.Embedding(len(TYPE_CYCLE), d_model)
+        self.time_proj = nn.Linear(1, d_model)  # position in piece: 0 (start) .. 1 (end)
 
         self.layers = nn.ModuleList([
             TransformerLayer(d_model, nhead, dropout) for _ in range(num_layers)
@@ -235,8 +239,8 @@ class MusicTransformerT2(BaseMusicModel):
             else:
                 nn.init.normal_(p, std=std)
 
-    def forward(self, tokens, types, cache=None):
-        x = self.tok_emb(tokens) + self.type_emb(types)
+    def forward(self, tokens, types, times, cache=None):
+        x = self.tok_emb(tokens) + self.type_emb(types) + self.time_proj(times)
         new_cache = []
         for i, layer in enumerate(self.layers):
             layer_cache = cache[i] if cache is not None else None
@@ -248,8 +252,8 @@ class MusicTransformerT2(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, length=200):
-        return compose(self, seedSong, length=length)
+    def generate(self, seedSong, targetSeconds=TARGET_SECONDS):
+        return compose(self, seedSong, targetSeconds=targetSeconds)
 
 
 
@@ -300,13 +304,14 @@ def train(model, songs, epochs=5, batch_size=8, lr=3e-4, warmup_steps=500):
     for epoch in range(epochs):
         total = 0
 
-        for (x_tok, x_types), y in loader:
+        for (x_tok, x_types, x_times), y in loader:
             x_tok   = x_tok.to(DEVICE)
             x_types = x_types.to(DEVICE)
+            x_times = x_times.to(DEVICE)
             y       = y.to(DEVICE)
 
             with torch.amp.autocast('cuda', enabled=use_amp):
-                logits, _ = model(x_tok, x_types)
+                logits, _ = model(x_tok, x_types, x_times)
                 loss   = loss_fn(logits, y)
 
             scaler.scale(loss).backward()
@@ -362,13 +367,14 @@ def fineTune(model, song, notes_per_chunk=64, epochs=2, batch_size=4, lr=1e-5):
     for epoch in range(epochs):
         total = 0
 
-        for (x_tok, x_types), y in loader:
+        for (x_tok, x_types, x_times), y in loader:
             x_tok = x_tok.to(DEVICE)
             x_types = x_types.to(DEVICE)
+            x_times = x_times.to(DEVICE)
             y = y.to(DEVICE)
 
             with torch.amp.autocast('cuda', enabled=use_amp):
-                logits, _ = model(x_tok, x_types)
+                logits, _ = model(x_tok, x_types, x_times)
                 loss = loss_fn(logits, y)
 
             scaler.scale(loss).backward()
@@ -395,24 +401,17 @@ def _nucleus_sample(logits, temperature, top_p):
 
 
 @torch.no_grad()
-def compose(model, seedSong, length=200, temperature=1.0, top_p=0.9, rep_penalty=1.2):
+def compose(model, seedSong, targetSeconds=TARGET_SECONDS, temperature=1.0, top_p=0.9, rep_penalty=1.2):
     model.eval()
 
     seedSong = seedSong[:SEED_NOTES]
 
     tokens_per_note = len(TYPE_CYCLE)
-    total_tokens = (len(seedSong) + length) * tokens_per_note
-    if total_tokens > MAX_SEQ_LEN:
-        raise ValueError(
-            f"compose() would need {total_tokens} tokens "
-            f"({len(seedSong)} seed notes + {length} generated notes) x {tokens_per_note} tokens/note, "
-            f"but model max is {MAX_SEQ_LEN} tokens. Reduce length or SEED_NOTES."
-        )
 
     # encode seed notes into token sequence
     seed_toks = []
     for note in seedSong:
-        seed_toks.extend(encode_note(*note))
+        seed_toks.extend(encode_note(*note[:4]))
 
     seed_tokens = torch.tensor(seed_toks, dtype=torch.long, device=DEVICE).unsqueeze(0)
     seed_types = torch.tensor(
@@ -420,8 +419,24 @@ def compose(model, seedSong, length=200, temperature=1.0, top_p=0.9, rep_penalty
         dtype=torch.long, device=DEVICE
     ).unsqueeze(0)
 
+    # elapsed time (dt bins converted to approx seconds) since the start of the OUTPUT
+    # piece, not the original song's own timeline - keeps a single self-consistent 0..1
+    # scale across the seed and everything generated after it
+    seconds_per_bin = DT_MAX_SECONDS / MAX_TIME
+    elapsed = 0.0
+    seed_elapsed = [0.0]
+    for n in seedSong[1:]:
+        elapsed += n[2] * seconds_per_bin
+        seed_elapsed.append(elapsed)
+
+    seed_time_values = [min(1.0, t / targetSeconds) for t in seed_elapsed]
+    seed_times = torch.tensor(
+        [tv for tv in seed_time_values for _ in range(len(TYPE_CYCLE))],
+        dtype=torch.float32, device=DEVICE
+    ).unsqueeze(0).unsqueeze(-1)
+
     # prefill: run the seed once to build the KV cache, keep its last-position logits
-    seed_logits, cache = model(seed_tokens, seed_types)
+    seed_logits, cache = model(seed_tokens, seed_types, seed_times)
     next_logits = seed_logits[0, -1].clone()
 
     # precompute a reusable -inf mask per token type instead of rebuilding it every step
@@ -435,9 +450,13 @@ def compose(model, seedSong, length=200, temperature=1.0, top_p=0.9, rep_penalty
     recent_pitches = [n[0] for n in seedSong[-32:]]
 
     generated_notes = []
+    current_time_value = seed_time_values[-1] if seed_time_values else 0.0
+    current_tokens = len(seed_toks)
 
-    for _ in range(length):
+    while elapsed < targetSeconds and current_tokens + tokens_per_note <= MAX_SEQ_LEN:
         note_toks = []
+        # same time value feeds all 4 sub-tokens of this note - only known once dt is sampled
+        time_tensor = torch.tensor([[[current_time_value]]], dtype=torch.float32, device=DEVICE)
 
         for tok_type in TYPE_CYCLE:   # generate PITCH → VEL → DT
             logits = next_logits + type_masks[tok_type]
@@ -455,14 +474,18 @@ def compose(model, seedSong, length=200, temperature=1.0, top_p=0.9, rep_penalty
             # to get the logits for whatever comes next
             tok_tensor = torch.tensor([[tok]], dtype=torch.long, device=DEVICE)
             type_tensor = torch.tensor([[tok_type]], dtype=torch.long, device=DEVICE)
-            step_logits, cache = model(tok_tensor, type_tensor, cache=cache)
+            step_logits, cache = model(tok_tensor, type_tensor, time_tensor, cache=cache)
             next_logits = step_logits[0, -1].clone()
 
         pitch, vel, dt, sus = decode_note(*note_toks)
         generated_notes.append((pitch, vel, dt, sus))
         recent_pitches = (recent_pitches + [pitch])[-32:]
 
-    return list(seedSong) + generated_notes
+        elapsed += dt * seconds_per_bin
+        current_time_value = min(1.0, elapsed / targetSeconds)
+        current_tokens += tokens_per_note
+
+    return [(n[0], n[1], n[2], n[3]) for n in seedSong] + generated_notes
 
 
 def trainModel(songs):
@@ -472,12 +495,12 @@ def trainModel(songs):
     return model
 
 
-def composeMusic(seedSong):
-    parser = Parser.MidiParser(MAX_VELOCITY, MAX_TIME, MAX_DURATION)
-
-    model = loadModel()
-    model = fineTune(model, seedSong, epochs=2, lr=1e-5)
-
-    generated = compose(model, seedSong, length=200)
-    generatedNotes = parser.convertedNotes(generated)
-    midi_tester.testMidi(generatedNotes, "midiTransformerT2.mid")
+# def composeMusic(seedSong):
+#     parser = Parser.MidiParser(MAX_VELOCITY, MAX_TIME, MAX_DURATION)
+#
+#     model = loadModel()
+#     model = fineTune(model, seedSong, epochs=2, lr=1e-5)
+#
+#     generated = compose(model, seedSong)
+#     generatedNotes = parser.convertedNotes(generated)
+#     midi_tester.testMidi(generatedNotes, "midiTransformerT2.mid")

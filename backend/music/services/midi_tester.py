@@ -49,7 +49,7 @@ def _build_midi_file(notes):
     current_time = 0
     last_sustain = None
 
-    for note, velocity, delta_time, sustain in notes:
+    for note, velocity, delta_time, sustain, duration in notes:
 
         current_time += sec_to_ticks(delta_time)
         start = current_time
@@ -59,7 +59,7 @@ def _build_midi_file(notes):
             last_sustain = sustain
 
         events.append((start, 'note_on', note, velocity))
-        events.append((1, 'note_off', note, 0)) # todo: 1 is duration. is this ok?
+        events.append((start + sec_to_ticks(duration), 'note_off', note, 0))
 
     # ----------------------------
     # sort events globally
@@ -85,7 +85,6 @@ def _build_midi_file(notes):
 
 
 def testMidi(notes, fileName = "outputTest.mid"):
-    print("midi testttttttttttttttttttttttt")
 
     mid = _build_midi_file(notes)
 
@@ -93,7 +92,7 @@ def testMidi(notes, fileName = "outputTest.mid"):
     # save + playback
     # ----------------------------
     mid.save(fileName)
-    print("saved:", fileName)
+    print("testMidi: saved:", fileName)
 
 
 def midiToBytes(notes) -> bytes:
