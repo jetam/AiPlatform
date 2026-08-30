@@ -19,13 +19,13 @@ from . import midi_parser as midiParser
 TICKS_PER_BEAT = 480
 BPM = 120
 
-mid = MidiFile(ticks_per_beat=TICKS_PER_BEAT)
-track = MidiTrack()
-mid.tracks.append(track)
+# mid = MidiFile(ticks_per_beat=TICKS_PER_BEAT)
+# track = MidiTrack()
+# mid.tracks.append(track)
 
 # set tempo
-tempo = mido.bpm2tempo(BPM)
-track.append(MetaMessage('set_tempo', tempo=tempo, time=0))
+# tempo = mido.bpm2tempo(BPM)
+# track.append(MetaMessage('set_tempo', tempo=tempo, time=0))
 
 
 def sec_to_ticks(seconds):
@@ -53,6 +53,8 @@ def _build_midi_file(notes):
 
         current_time += sec_to_ticks(delta_time)
         start = current_time
+
+        print("sustain value::" + str(sustain))
 
         if sustain != last_sustain:
             events.append((start, 'control_change', 64, sustain))

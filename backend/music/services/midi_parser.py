@@ -115,6 +115,9 @@ class MidiParser:
             data[2] = int(self.MAX_TIME * t // maxTime)
             data[4] = ( data[4] / self.songTime ) if self.songTime > 0 else 0.0  # 0 (start) .. 1 (end)
 
+
+        print( "read_midi: average time = " + str(timeSum / count) )
+
         return timeSum / count # used to set the speed to original speed
 
 
@@ -140,11 +143,15 @@ class MidiParser:
             timeSum += dt
             count += 1
 
+        # print("convertedNotes: average time before = " + str(timeSum / count))
 
         if( timeSum <= 0 ):
             raise ValueError( f"Time sum of generated music is 0" )
 
         timeFactor = averageTime / (timeSum/count) if (timeSum > 0 and count > 0) else 1 # timeFactor is used to make speed of song closer to original
+
+        # print("time sum: " + str(timeSum)) # todo: check this
+        # print("time factor: " + str(timeFactor))
 
         # real gap (seconds) since the previous note, for every note
         times = [timeFactor * dt for _, _, dt, _ in generatedNotes]
@@ -160,6 +167,14 @@ class MidiParser:
             duration = max(MIN_NOTE_DURATION_SECONDS, nextGap * fraction)
 
             converted.append((p, velocity, time, sustainValue, duration))
+
+        # timeSum = 0
+        # count = 0
+        # for _, _, dt, _, _ in converted: # test delete
+        #     timeSum += dt
+        #     count += 1
+        #
+        # print("convertedNotes: average time after = " + str(timeSum / count))
 
         return converted
 
