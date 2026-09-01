@@ -14,13 +14,12 @@ from .base_model import BaseMusicModel, SEED_NOTES
 
 MODEL_DIR = "./music/trained_models/transformer1"
 MODEL_NUM = 1
-MODEL_NUM = 1
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 from .music_config import (
     PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
-    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, DT_MAX_SECONDS, TARGET_SECONDS,
+    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, TARGET_SECONDS,
 )
 
 TOKEN_VOCAB = PITCH_VOCAB * VEL_VOCAB * DT_VOCAB
@@ -42,8 +41,9 @@ def decode_token(token: int):
 
 
 class MusicDataset(Dataset):
-    def __init__(self, songs, seq_len=256):
+    def __init__(self, songs, seq_len=256, augment=True):
         self.seq_len = seq_len
+        self.augment = augment
         self.data = []
 
         for song in songs:
@@ -65,8 +65,7 @@ class MusicDataset(Dataset):
     def __getitem__(self, idx):
         tok_chunk, pit_chunk, sus_chunk, time_chunk = self.data[idx]
 
-        # pitch transposition augmentation: shift ±6 semitones per chunk
-        shift = random.randint(-6, 6)
+        shift = random.randint(-6, 6) if self.augment else 0
         if shift != 0:
             pit_chunk = [max(0, min(127, p + shift)) for p in pit_chunk]
             tok_chunk = [encode_token(p, *decode_token(t)[1:]) for p, t in zip(pit_chunk, tok_chunk)]
@@ -231,8 +230,8 @@ class MusicTransformerT1(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
-        return compose(self, seedSong, targetSeconds=targetSeconds, averageTime=averageTime)
+    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
+        return compose(self, seedSong, targetSeconds=targetSeconds, maxTime=maxTime)
 
 
 def loss_fn(logits, targets):
@@ -247,11 +246,51 @@ def loss_fn(logits, targets):
     )
 
 
-def train(model, songs, epochs=5, batch_size=8, lr=3e-4, warmup_steps=500):
+def _t1_batch_loss(model, batch):
+    (x_tok, x_rel, x_sus, x_time), (y_pc, y_po, y_v, y_d, y_sus) = batch
+    x_tok = x_tok.to(DEVICE)
+    x_rel = x_rel.to(DEVICE)
+    x_sus = x_sus.to(DEVICE)
+    x_time = x_time.to(DEVICE)
+    y_pc, y_po, y_v, y_d, y_sus = (
+        y_pc.to(DEVICE), y_po.to(DEVICE),
+        y_v.to(DEVICE),  y_d.to(DEVICE), y_sus.to(DEVICE)
+    )
+
+    logits = model(x_tok, x_rel, x_sus, x_time, pc=y_pc, po=y_po, v=y_v, dt=y_d)
+    return loss_fn(logits, (y_pc, y_po, y_v, y_d, y_sus))
+
+
+@torch.no_grad()
+def evaluate(model, loader):
+    model.eval()
+    total = 0.0
+    count = 0
+
+    for batch in loader:
+        loss = _t1_batch_loss(model, batch)
+        total += loss.item()
+        count += 1
+
+    model.train()
+    return total / max(1, count)
+
+
+def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_split=0.1, checkpoint_every=1):
     model = model.to(DEVICE)
 
-    dataset = MusicDataset(songs)
+    shuffled = songs[:]
+    random.shuffle(shuffled)
+    split_idx = max(1, int(len(shuffled) * (1 - val_split))) if len(shuffled) > 1 else len(shuffled)
+    train_songs, val_songs = shuffled[:split_idx], shuffled[split_idx:]
+
+    dataset = MusicDataset(train_songs)
     loader  = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    val_loader = None
+    if val_songs:
+        val_dataset = MusicDataset(val_songs, augment=False)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
 
@@ -265,21 +304,19 @@ def train(model, songs, epochs=5, batch_size=8, lr=3e-4, warmup_steps=500):
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
 
+    # "latest" is overwritten every checkpoint so a preempted/interrupted run never
+    # loses more than checkpoint_every epochs of progress; "best" tracks the lowest
+    # validation loss seen so far, protecting against late overfitting on a long run
+    latest_path = os.path.join(MODEL_DIR, f"pretrained{MODEL_NUM}.pt")
+    best_path = os.path.join(MODEL_DIR, f"pretrained{MODEL_NUM}_best.pt")
+    best_val_loss = float('inf')
+
     for epoch in range(epochs):
+        model.train()
         total = 0
 
-        for (x_tok, x_rel, x_sus, x_time), (y_pc, y_po, y_v, y_d, y_sus) in loader:
-            x_tok = x_tok.to(DEVICE)
-            x_rel = x_rel.to(DEVICE)
-            x_sus = x_sus.to(DEVICE)
-            x_time = x_time.to(DEVICE)
-            y_pc, y_po, y_v, y_d, y_sus = (
-                y_pc.to(DEVICE), y_po.to(DEVICE),
-                y_v.to(DEVICE),  y_d.to(DEVICE), y_sus.to(DEVICE)
-            )
-
-            logits = model(x_tok, x_rel, x_sus, x_time, pc=y_pc, po=y_po, v=y_v, dt=y_d)
-            loss   = loss_fn(logits, (y_pc, y_po, y_v, y_d, y_sus))
+        for batch in loader:
+            loss = _t1_batch_loss(model, batch)
 
             opt.zero_grad()
             loss.backward()
@@ -288,9 +325,22 @@ def train(model, songs, epochs=5, batch_size=8, lr=3e-4, warmup_steps=500):
 
             total += loss.item()
 
-        print(f"tr1 Epoch {epoch+1} | loss {total:.4f} | lr {scheduler.get_last_lr()[0]:.2e}")
+        msg = f"tr1 Epoch {epoch+1} | train loss {total:.4f} | lr {scheduler.get_last_lr()[0]:.2e}"
 
-    torch.save(model.state_dict(), os.path.join(MODEL_DIR, f"pretrained{MODEL_NUM}.pt"))
+        val_loss = None
+        if val_loader is not None:
+            val_loss = evaluate(model, val_loader)
+            msg += f" | val loss {val_loss:.4f}"
+
+        print(msg)
+
+        if (epoch + 1) % checkpoint_every == 0 or epoch == epochs - 1:
+            torch.save(model.state_dict(), latest_path)
+
+        if val_loss is not None and val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), best_path)
+            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path}")
 
     return model
 
@@ -352,7 +402,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=4, lr=1e-5):
 
 
 @torch.no_grad()
-def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0, temperature=1.0, top_p=0.9):
+def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperature=1.0, top_p=0.9):
     model.eval()
 
     seedSong = seedSong[:SEED_NOTES]
@@ -372,17 +422,9 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0, temper
         dtype=torch.long, device=DEVICE
     ).unsqueeze(0)
 
-    # elapsed time (dt bins converted to approx seconds) since the start of the OUTPUT
-    # piece, not the original song's own timeline - keeps a single self-consistent 0..1
-    # scale across the seed and everything generated after it.
-    # calibrated from the seed's own bin-vs-real-seconds pace when available, so
-    # targetSeconds means real seconds instead of a fixed, uncalibrated guess
-    seed_avg_bin = sum(n[2] for n in seedSong[1:]) / max(1, len(seedSong) - 1)
-    seconds_per_bin = (
-        averageTime / seed_avg_bin
-        if (averageTime > 0 and seed_avg_bin > 0)
-        else DT_MAX_SECONDS / MAX_TIME
-    )
+
+    seconds_per_bin = maxTime / MAX_TIME
+
     elapsed = 0.0
     seed_elapsed = [0.0]
     for n in seedSong[1:]:
@@ -404,7 +446,10 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0, temper
         chosen = torch.multinomial(sorted_probs, 1)
         return sorted_idx.gather(-1, chosen).item()
 
-    while elapsed < targetSeconds and tokens.size(1) < MAX_SEQ_LEN:
+    generated = []  # full history of generated (non-seed) notes - never trimmed, unlike the sliding window below
+    MAX_NOTES = 5000  # safety cap in case dt keeps sampling to 0 and elapsed never advances
+
+    while elapsed < targetSeconds and len(generated) < MAX_NOTES:
 
         rel = torch.zeros_like(pitches)
         rel[:, 1:] = pitches[:, 1:] - pitches[:, :-1]
@@ -441,24 +486,28 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0, temper
         elapsed += dt * seconds_per_bin
         time_value = min(1.0, elapsed / targetSeconds)
 
+        generated.append((pitch, vel, dt, sus))
+
         next_tok   = torch.tensor([[encode_token(pitch, vel, dt)]], dtype=torch.long, device=DEVICE)
         next_pitch = torch.tensor([[pitch]], dtype=torch.long, device=DEVICE)
         next_sus   = torch.tensor([[sus]], dtype=torch.long, device=DEVICE)
         next_time  = torch.tensor([[[time_value]]], dtype=torch.float32, device=DEVICE)
 
-        tokens   = torch.cat([tokens,   next_tok],   dim=1)
-        pitches  = torch.cat([pitches,  next_pitch], dim=1)
-        sustains = torch.cat([sustains, next_sus],   dim=1)
-        times    = torch.cat([times,    next_time],  dim=1)
+        # sliding window: once full, drop the oldest note so the model can keep going
+        # indefinitely instead of hitting MAX_SEQ_LEN and stopping early
+        tokens   = torch.cat([tokens,   next_tok],   dim=1)[:, -MAX_SEQ_LEN:]
+        pitches  = torch.cat([pitches,  next_pitch], dim=1)[:, -MAX_SEQ_LEN:]
+        sustains = torch.cat([sustains, next_sus],   dim=1)[:, -MAX_SEQ_LEN:]
+        times    = torch.cat([times,    next_time],  dim=1)[:, -MAX_SEQ_LEN:]
 
-    decoded = [decode_token(t) for t in tokens.squeeze(0).tolist()]
-    sus_list = sustains.squeeze(0).tolist()
-    return [(p, v, d, s) for (p, v, d), s in zip(decoded, sus_list)]
+    print("elapsed:", elapsed)
+
+    return [(n[0], n[1], n[2], n[3]) for n in seedSong] + generated
 
 
 def trainModel(songs):
     model = MusicTransformerT1()
-    train(model, songs, epochs=5)
+    train(model, songs, epochs=10)
 
     return model
 

@@ -54,8 +54,6 @@ def _build_midi_file(notes):
         current_time += sec_to_ticks(delta_time)
         start = current_time
 
-        print("sustain value::" + str(sustain))
-
         if sustain != last_sustain:
             events.append((start, 'control_change', 64, sustain))
             last_sustain = sustain
@@ -109,7 +107,7 @@ def test():
     parser = midiParser.MidiParser()
     parser.read_midi("./midiFiles/maestro/maestro-v3.0.0/2004/MIDI-Unprocessed_SMF_02_R1_2004_01-05_ORIG_MID--AUDIO_02_R1_2004_05_Track05_wav.midi")
     # midi_data stores velocity/delta_time as bin indices, not real MIDI values - convert back before playback
-    testMidi(parser.convertedNotes(parser.midi_data), "test1.mid")
+    testMidi(parser.convertNotes(parser.midi_data), "test1.mid")
 
 if __name__ == "__main__":
     test()

@@ -3,6 +3,8 @@ from torch.utils.data import Dataset, DataLoader
 import torch
 import torch.nn as nn
 import os
+import math
+import random
 from .music_config import DT_VOCAB, VEL_VOCAB
 from ..services import midi_parser as Parser
 from ..services import midi_tester as midi_tester
@@ -16,16 +18,17 @@ MODEL_NUM = 1
 
 from .music_config import (
     PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
-    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, DT_MAX_SECONDS, TARGET_SECONDS,
+    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, TARGET_SECONDS,
 )
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 class MusicDataset(Dataset):
 
-    def __init__(self, songs, seq_len):
+    def __init__(self, songs, seq_len, augment=True):
         self.songs = songs
         self.seq_len = seq_len
+        self.augment = augment
 
     def __len__(self):
         return len(self.songs) * 50
@@ -33,8 +36,8 @@ class MusicDataset(Dataset):
     def __getitem__(self, idx):
         song = self.songs[idx % len(self.songs)]
 
-        # mix random + deterministic sampling
-        if torch.rand(1).item() < 0.7:
+        # mix random + deterministic sampling - validation uses deterministic windows
+        if self.augment and torch.rand(1).item() < 0.7:
             start = torch.randint(0, len(song) - self.seq_len, (1,)).item()
         else:
             start = (idx * self.seq_len) % (len(song) - self.seq_len)
@@ -137,50 +140,81 @@ class MusicRNN(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
-        return compose(self, seedSong, targetSeconds=targetSeconds, averageTime=averageTime)
+    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
+        return compose(self, seedSong, targetSeconds=targetSeconds, maxTime=maxTime)
 
 
-def train(model, dataloader, epochs=3, lr=1e-3):
+def _rnn_losses(model, notes, others, times, ce):
+    pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
+
+    pc = notes % 12
+    octv = notes // 12
+
+    loss_pc = ce(pc_logits[:, :-1].reshape(-1, 12), pc[:, 1:].reshape(-1))
+    loss_oct = ce(oct_logits[:, :-1].reshape(-1, 11), octv[:, 1:].reshape(-1))
+
+    loss_vel = ce(
+        vel_logits[:, :-1].reshape(-1, vel_logits.size(-1)),
+        others[:, 1:, 0].reshape(-1)
+    )
+
+    loss_dt = ce(
+        dt_logits[:, :-1].reshape(-1, dt_logits.size(-1)),
+        others[:, 1:, 1].reshape(-1)
+    )
+
+    loss_sus = ce(
+        sus_logits[:, :-1].reshape(-1, sus_logits.size(-1)),
+        others[:, 1:, 2].reshape(-1)
+    )
+
+    return 2 * loss_pc + loss_oct + loss_vel + loss_dt + loss_sus
+
+
+@torch.no_grad()
+def evaluate(model, loader, ce):
+    model.eval()
+    total = 0.0
+    count = 0
+
+    for notes, others, times in loader:
+        loss = _rnn_losses(model, notes, others, times, ce)
+        total += loss.item()
+        count += 1
+
+    model.train()
+    return total / max(1, count)
+
+
+def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=200, checkpoint_every=1):
 
     opt = torch.optim.Adam(model.parameters(), lr=lr) # updates weights using gradients
     ce = nn.CrossEntropyLoss() # used because all outputs are classification problems
 
+    total_steps = epochs * len(dataloader)
+
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return step / max(1, warmup_steps)
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
+
+    # "latest" is overwritten every checkpoint so a preempted/interrupted run never
+    # loses more than checkpoint_every epochs of progress; "best" tracks the lowest
+    # validation loss seen so far, protecting against late overfitting on a long run
+    latest_path = os.path.join(MODEL_DIR, f"pretrained_{MODEL_NUM}.pt")
+    best_path = os.path.join(MODEL_DIR, f"pretrained_{MODEL_NUM}_best.pt")
+    best_val_loss = float('inf')
+
     for epoch in range(epochs):
+        model.train()
         total = 0.0
 
         for notes, others, times in dataloader:
 
-            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
-            # shapes:
-            # pc_logits(B, T, 12)
-            # oct_logits(B, T, 11)
-            # vel_logits(B, T, 9)
-            # dt_logits(B, T, 17)
-            # sus_logits(B, T, 2)
-
-            pc = notes % 12
-            octv = notes // 12
-
-            loss_pc = ce(pc_logits[:, :-1].reshape(-1, 12), pc[:, 1:].reshape(-1))
-            loss_oct = ce(oct_logits[:, :-1].reshape(-1, 11), octv[:, 1:].reshape(-1))
-
-            loss_vel = ce(
-                vel_logits[:, :-1].reshape(-1, vel_logits.size(-1)),
-                others[:, 1:, 0].reshape(-1)
-            )
-
-            loss_dt = ce(
-                dt_logits[:, :-1].reshape(-1, dt_logits.size(-1)),
-                others[:, 1:, 1].reshape(-1)
-            )
-
-            loss_sus = ce(
-                sus_logits[:, :-1].reshape(-1, sus_logits.size(-1)),
-                others[:, 1:, 2].reshape(-1)
-            )
-
-            loss = 2 * loss_pc + loss_oct + loss_vel + loss_dt + loss_sus
+            loss = _rnn_losses(model, notes, others, times, ce)
 
             opt.zero_grad()
             loss.backward()
@@ -188,12 +222,26 @@ def train(model, dataloader, epochs=3, lr=1e-3):
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0) # gradient clipping
 
             opt.step()
+            scheduler.step()
 
             total += loss.item()
 
-        print(f"rnn epoch {epoch} | loss {total:.4f}")
+        msg = f"rnn epoch {epoch} | train loss {total:.4f} | lr {scheduler.get_last_lr()[0]:.2e}"
 
-    torch.save(model.state_dict(), os.path.join(MODEL_DIR, f"pretrained_{MODEL_NUM}.pt"))
+        val_loss = None
+        if val_loader is not None:
+            val_loss = evaluate(model, val_loader, ce)
+            msg += f" | val loss {val_loss:.4f}"
+
+        print(msg)
+
+        if (epoch + 1) % checkpoint_every == 0 or epoch == epochs - 1:
+            torch.save(model.state_dict(), latest_path)
+
+        if val_loss is not None and val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), best_path)
+            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path}")
 
 def loadModel():
     # model_path = os.path.join(MODEL_DIR, f"pretrained{MODEL_NUM}.pt")
@@ -284,7 +332,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
     return model
 
 @torch.no_grad() # do not compute gradients
-def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
+def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
 
     model.eval()
 
@@ -293,17 +341,7 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
     seq_notes = [n[0] for n in seedSong]
     seq_others = [[n[1], n[2], n[3]] for n in seedSong]
 
-    # elapsed time (in dt bins converted to approx seconds) since the start of the
-    # OUTPUT piece, not the original song's own timeline - keeps a single self-consistent
-    # 0..1 scale across the seed and everything generated after it.
-    # calibrated from the seed's own bin-vs-real-seconds pace when available, so
-    # targetSeconds means real seconds instead of a fixed, uncalibrated guess
-    seed_avg_bin = sum(n[2] for n in seedSong[1:]) / max(1, len(seedSong) - 1)
-    seconds_per_bin = (
-        averageTime / seed_avg_bin
-        if (averageTime > 0 and seed_avg_bin > 0)
-        else DT_MAX_SECONDS / MAX_TIME
-    )
+    seconds_per_bin = maxTime / MAX_TIME
     elapsed = 0.0
     seed_elapsed = [0.0]
     for n in seedSong[1:]:
@@ -351,11 +389,18 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, averageTime=0):
             seq_others = seq_others[-SEQUENCE_LENGTH:]
             seq_times = seq_times[-SEQUENCE_LENGTH:]
 
+    print("elapsed:", elapsed)
+
     return [(n[0], n[1], n[2], n[3]) for n in seedSong] + generated
 
-def trainModel(songs):
-    dataset = MusicDataset(songs, SEQUENCE_LENGTH)
+def trainModel(songs, val_split=0.1):
+    shuffled = songs[:]
+    random.shuffle(shuffled)
 
+    split_idx = max(1, int(len(shuffled) * (1 - val_split))) if len(shuffled) > 1 else len(shuffled)
+    train_songs, val_songs = shuffled[:split_idx], shuffled[split_idx:]
+
+    dataset = MusicDataset(train_songs, SEQUENCE_LENGTH)
     loader = DataLoader(
         dataset,
         batch_size=16,
@@ -364,9 +409,20 @@ def trainModel(songs):
         collate_fn=collate_fn,
     )
 
+    val_loader = None
+    if val_songs:
+        val_dataset = MusicDataset(val_songs, SEQUENCE_LENGTH, augment=False)
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=16,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=collate_fn,
+        )
+
     model = MusicRNN()
 
-    train(model, loader, epochs=5)
+    train(model, loader, val_loader=val_loader, epochs=10)
 
     return model
 

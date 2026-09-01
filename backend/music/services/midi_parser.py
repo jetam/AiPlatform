@@ -6,7 +6,6 @@ from . import midi_tester
 import os
 from pathlib import Path
 
-
 # This is only intended for piano/ single instrument music!
 
 MAX_MIDI_PITCH = 127
@@ -14,12 +13,12 @@ MAX_MIDI_VELOCITY = 127
 
 # INFO: Tempo is put into times. Every MIDI event has time. the time difference between events is time * current relativeTempo
 
-# off-notes aren't modeled/generated - convertedNotes() derives a duration heuristically
-# instead: pedal down holds almost the whole gap to the next note (legato), pedal up
-# releases a bit earlier (detached)
+# off-notes aren't modeled/generated - convertNotes() derives a duration heuristically instead: pedal down holds almost the whole gap to the next note (legato), pedal up releases a bit earlier (detached)
 SUSTAIN_DURATION_FRACTION = 0.95
 STACCATO_DURATION_FRACTION = 0.7
 MIN_NOTE_DURATION_SECONDS = 0.05
+
+MAX_TIME_PERCENTILE = 0.95
 
 
 class MidiParser:
@@ -42,8 +41,6 @@ class MidiParser:
         startTime = False # Start measuring time at first note event
         self.midi_data = [] # put feature vectors here [pitch, velocity, time]
         self.meta_data = [] # meta data. todo: need this?
-
-        maxTime = 0.0 # time needs to be quantized.
 
         startTempo = 500000 # default tempo
         currentTempo = startTempo # todo: need start and current?
@@ -92,21 +89,23 @@ class MidiParser:
 
             sustainBin = 1 if sustain >= 64 else 0  # CC64 convention: >=64 is pedal-down
 
-            if( maxTime < deltaTime ):
-                maxTime = deltaTime
-
             self.midi_data.append([msg.note, velocity, deltaTime, sustainBin, current_time])  # ( note, velocity, delta time, sustain, absolute time )
 
             relativeTempo = startTempo / currentTempo
 
-        maxTime = maxTime * 0.95 # cut off too long times whet putting time into bins
+    
+        observedGaps = sorted(data[2] for data in self.midi_data)
+        if observedGaps:
+            idx = int(MAX_TIME_PERCENTILE * (len(observedGaps) - 1))
+            maxTime = observedGaps[idx] or 1.0  # avoid a zero denominator if every gap is 0
+        else:
+            maxTime = 1.0
 
         self.songTime = current_time
 
         timeSum = 0
         count = 0
-        for data in self.midi_data:
-            # print("data:", data)
+        for data in self.midi_data: # Put values into bins
             t = min(data[2], maxTime)
 
             timeSum += t
@@ -115,10 +114,7 @@ class MidiParser:
             data[2] = int(self.MAX_TIME * t // maxTime)
             data[4] = ( data[4] / self.songTime ) if self.songTime > 0 else 0.0  # 0 (start) .. 1 (end)
 
-
-        print( "read_midi: average time = " + str(timeSum / count) )
-
-        return timeSum / count # used to set the speed to original speed
+        return maxTime # used to set the speed to original speed
 
 
         # test:
@@ -134,7 +130,7 @@ class MidiParser:
         # )
 
 
-    def convertedNotes(self, generatedNotes, averageTime = 0): # this is used after transformer
+    def convertNotes(self, generatedNotes, maxTime = 1): # this is used after transformer
         converted = []
         timeSum = 0
         count = 0
@@ -143,19 +139,16 @@ class MidiParser:
             timeSum += dt
             count += 1
 
-        # print("convertedNotes: average time before = " + str(timeSum / count))
-
         if( timeSum <= 0 ):
             raise ValueError( f"Time sum of generated music is 0" )
 
-        timeFactor = averageTime / (timeSum/count) if (timeSum > 0 and count > 0) else 1 # timeFactor is used to make speed of song closer to original
-
-        # print("time sum: " + str(timeSum)) # todo: check this
-        # print("time factor: " + str(timeFactor))
+        timeFactor = maxTime / self.MAX_TIME # timeFactor is used to make speed of song closer to original
 
         # real gap (seconds) since the previous note, for every note
         times = [timeFactor * dt for _, _, dt, _ in generatedNotes]
-        fallbackDuration = averageTime if averageTime > 0 else 0.5
+        # last note has no "next" gap to derive a duration from - fall back to this
+        # song's own average gap instead of an unrelated external value
+        fallbackDuration = (sum(times) / len(times)) if times else 0.5
 
         for i, (p, v, dt, sustain) in enumerate(generatedNotes):
             velocity = v * (MAX_MIDI_VELOCITY // self.MAX_VELOCITY)
@@ -167,14 +160,6 @@ class MidiParser:
             duration = max(MIN_NOTE_DURATION_SECONDS, nextGap * fraction)
 
             converted.append((p, velocity, time, sustainValue, duration))
-
-        # timeSum = 0
-        # count = 0
-        # for _, _, dt, _, _ in converted: # test delete
-        #     timeSum += dt
-        #     count += 1
-        #
-        # print("convertedNotes: average time after = " + str(timeSum / count))
 
         return converted
 

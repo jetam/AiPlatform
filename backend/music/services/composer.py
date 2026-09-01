@@ -59,15 +59,15 @@ class Composer:
         print("Parsing MIDI from memory...")
 
         parser = Parser.MidiParser()
-        self.averageTime = parser.read_midi(midi_stream)
+        self.maxTime = parser.read_midi(midi_stream)
 
         self.currentSong = parser.midi_data
 
     def generateMusic(self):
         print("Generating Music begin")
-        generatedNotes = self.currentModel.generate(self.currentSong, averageTime=self.averageTime)
+        generatedNotes = self.currentModel.generate(self.currentSong, maxTime=self.maxTime)
         parser = Parser.MidiParser()
-        convertedNotes = parser.convertedNotes(generatedNotes, self.averageTime)
+        convertedNotes = parser.convertNotes(generatedNotes, self.maxTime)
         print("Generating Music end")
         return midi_tester.midiToBytes(convertedNotes)
 
