@@ -17,16 +17,18 @@ SONGS_DIRS = [
 def train():
     songs = []
     for songsDir in SONGS_DIRS:
-        print(f"Reading {songsDir}")
+        print(f"Reading {songsDir}", flush=True)
         songs += readMidiFiles(songsDir)
 
-    print("Training RNN...")
-    rnn.trainModel(songs)
+    print(f"Read {len(songs)} songs total", flush=True)
 
-    print("Training TransformerT1...")
-    tr1.trainModel(songs)
+    # print("Training RNN...", flush=True)
+    # rnn.trainModel(songs)
+    #
+    # print("Training TransformerT1...", flush=True)
+    # tr1.trainModel(songs)
 
-    print("Training TransformerT2...")
+    print("Training TransformerT2...", flush=True)
     tr2.trainModel(songs)
 
 

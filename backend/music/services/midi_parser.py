@@ -168,14 +168,18 @@ def readMidiFiles(midiDir):
     songs = []
     parser = MidiParser()
 
-    for file in Path(midiDir).iterdir():
+    files = [f for f in Path(midiDir).iterdir() if f.is_file()]
+    total = len(files)
 
-        if file.is_file():
-            filepath = os.path.join(midiDir, file.name)
-            parser.read_midi(filepath)
+    for i, file in enumerate(files, start=1):
+        filepath = os.path.join(midiDir, file.name)
+        parser.read_midi(filepath)
 
-            # midi_tester.testMidi( parser.convertedNotes( parser.midi_data ) )
-            songs.append(parser.midi_data)
+        # midi_tester.testMidi( parser.convertedNotes( parser.midi_data ) )
+        songs.append(parser.midi_data)
+
+        if i % 50 == 0 or i == total:
+            print(f"  read {i}/{total} files from {midiDir}", flush=True)
 
     return songs
 

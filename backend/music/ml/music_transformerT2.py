@@ -343,11 +343,13 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
     best_path = os.path.join(MODEL_DIR, f"pretrained_{MODEL_NUM}_best.pt")
     best_val_loss = float('inf')
 
+    num_batches = len(loader)
+
     for epoch in range(epochs):
         model.train()
         total = 0
 
-        for (x_tok, x_types, x_times), y in loader:
+        for batch_idx, ((x_tok, x_types, x_times), y) in enumerate(loader, start=1):
             x_tok   = x_tok.to(DEVICE)
             x_types = x_types.to(DEVICE)
             x_times = x_times.to(DEVICE)
@@ -367,6 +369,9 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
 
             total += loss.item()
 
+            if batch_idx % 100 == 0 or batch_idx == num_batches:
+                print(f"  tr2 epoch {epoch+1} | batch {batch_idx}/{num_batches} | loss so far {total:.4f}", flush=True)
+
         msg = f"tr2 Epoch {epoch+1} | train loss {total:.4f} | lr {scheduler.get_last_lr()[0]:.2e}"
 
         val_loss = None
@@ -374,15 +379,16 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
             val_loss = evaluate(model, val_loader, use_amp)
             msg += f" | val loss {val_loss:.4f}"
 
-        print(msg)
+        print(msg, flush=True)
 
         if (epoch + 1) % checkpoint_every == 0 or epoch == epochs - 1:
             torch.save(model.state_dict(), latest_path)
+            print(f"  -> checkpoint saved to {latest_path}", flush=True)
 
         if val_loss is not None and val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), best_path)
-            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path}")
+            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path}", flush=True)
 
     return model
 

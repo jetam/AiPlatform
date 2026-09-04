@@ -211,11 +211,13 @@ def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=2
     best_path = os.path.join(MODEL_DIR, f"pretrained_{MODEL_NUM}_best.pt")
     best_val_loss = float('inf')
 
+    num_batches = len(dataloader)
+
     for epoch in range(epochs):
         model.train()
         total = 0.0
 
-        for notes, others, times in dataloader:
+        for batch_idx, (notes, others, times) in enumerate(dataloader, start=1):
             notes, others, times = notes.to(DEVICE), others.to(DEVICE), times.to(DEVICE)
 
             loss = _rnn_losses(model, notes, others, times, ce)
@@ -230,6 +232,9 @@ def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=2
 
             total += loss.item()
 
+            if batch_idx % 100 == 0 or batch_idx == num_batches:
+                print(f"  rnn epoch {epoch} | batch {batch_idx}/{num_batches} | loss so far {total:.4f}", flush=True)
+
         msg = f"rnn epoch {epoch} | train loss {total:.4f} | lr {scheduler.get_last_lr()[0]:.2e}"
 
         val_loss = None
@@ -237,15 +242,16 @@ def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=2
             val_loss = evaluate(model, val_loader, ce)
             msg += f" | val loss {val_loss:.4f}"
 
-        print(msg)
+        print(msg, flush=True)
 
         if (epoch + 1) % checkpoint_every == 0 or epoch == epochs - 1:
             torch.save(model.state_dict(), latest_path)
+            print(f"  -> checkpoint saved to {latest_path}", flush=True)
 
         if val_loss is not None and val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), best_path)
-            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path}")
+            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path}", flush=True)
 
 def loadModel():
     # model_path = os.path.join(MODEL_DIR, f"pretrained{MODEL_NUM}.pt")
