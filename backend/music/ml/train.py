@@ -11,7 +11,7 @@ SONGS_DIRS = [
     MIDI_FILES_DIR / "midiFavourites",
     MIDI_FILES_DIR / "piano-midi",
     MIDI_FILES_DIR / "maestro" / "maestro-v3.0.0",
-]   
+]
 
 
 def train():

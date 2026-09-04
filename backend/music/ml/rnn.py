@@ -11,6 +11,7 @@ from ..services import midi_tester as midi_tester
 
 from .base_model import BaseMusicModel, SEED_NOTES
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 SEQUENCE_LENGTH = 64
 MODEL_DIR = "./music/trained_models/rnn"
@@ -178,6 +179,7 @@ def evaluate(model, loader, ce):
     count = 0
 
     for notes, others, times in loader:
+        notes, others, times = notes.to(DEVICE), others.to(DEVICE), times.to(DEVICE)
         loss = _rnn_losses(model, notes, others, times, ce)
         total += loss.item()
         count += 1
@@ -188,6 +190,7 @@ def evaluate(model, loader, ce):
 
 def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=200, checkpoint_every=1):
 
+    model = model.to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr) # updates weights using gradients
     ce = nn.CrossEntropyLoss() # used because all outputs are classification problems
 
@@ -213,6 +216,7 @@ def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=2
         total = 0.0
 
         for notes, others, times in dataloader:
+            notes, others, times = notes.to(DEVICE), others.to(DEVICE), times.to(DEVICE)
 
             loss = _rnn_losses(model, notes, others, times, ce)
 
@@ -250,7 +254,8 @@ def loadModel():
         raise FileNotFoundError(f"No trained RNN model found at {model_path}")
 
     model = MusicRNN()
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.to(DEVICE)
     model.eval()
 
     return model
@@ -263,6 +268,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
             f"seq_len={seq_len} notes."
         )
 
+    model = model.to(DEVICE)
     model.train()
 
     # 1) create dataset with ONLY this song
@@ -284,6 +290,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
         total_loss = 0.0
 
         for notes, others, times in loader:
+            notes, others, times = notes.to(DEVICE), others.to(DEVICE), times.to(DEVICE)
 
             pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
 
@@ -334,6 +341,7 @@ def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
 @torch.no_grad() # do not compute gradients
 def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
 
+    model = model.to(DEVICE)
     model.eval()
 
     seedSong = seedSong[:SEED_NOTES]
@@ -360,9 +368,9 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
 
     while elapsed < targetSeconds and len(generated) < MAX_NOTES:
 
-        n = torch.tensor([seq_notes], dtype=torch.long)
-        o = torch.tensor([seq_others], dtype=torch.long)
-        t = torch.tensor([seq_times], dtype=torch.float32)
+        n = torch.tensor([seq_notes], dtype=torch.long, device=DEVICE)
+        o = torch.tensor([seq_others], dtype=torch.long, device=DEVICE)
+        t = torch.tensor([seq_times], dtype=torch.float32, device=DEVICE)
 
         pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(n, o, t) # predicted distributions for each time step
 
