@@ -20,7 +20,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 from .music_config import (
     PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
-    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, TARGET_SECONDS,
+    MAX_PITCH, MAX_VELOCITY, MAX_DURATION,
 )
 
 # REMI-style token layout — each note produces 4 tokens in sequence
@@ -252,8 +252,8 @@ class MusicTransformerT2(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
-        return compose(self, seedSong, targetSeconds=targetSeconds, maxTime=maxTime)
+    def generate(self, seedSong):
+        return compose(self, seedSong)
 
 
 
@@ -463,22 +463,16 @@ def _nucleus_sample(logits, temperature, top_p):
 
 
 @torch.no_grad()
-def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperature=1.0, top_p=0.9, rep_penalty=1.2):
+def compose(model, seedSong, temperature=1.0, top_p=0.9, rep_penalty=1.2):
     print( "compose begin" )
     model.eval()
 
+    target_notes = len(seedSong)
     seedSong = seedSong[:SEED_NOTES]
 
     tokens_per_note = len(TYPE_CYCLE)
 
-    seconds_per_bin = maxTime / MAX_TIME
-    elapsed = 0.0
-    seed_elapsed = [0.0]
-    for n in seedSong[1:]:
-        elapsed += n[2] * seconds_per_bin
-        seed_elapsed.append(elapsed)
-
-    seed_time_values = [min(1.0, t / targetSeconds) for t in seed_elapsed]
+    seed_time_values = [min(1.0, i / target_notes) for i in range(len(seedSong))]
 
     # sliding-window state: the raw tokens/types/times currently "in view" - kept in
     # sync with the KV cache. RoPE position offsets are baked into cached keys, so old
@@ -513,13 +507,11 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperatur
 
     generated_notes = []
     current_time_value = seed_time_values[-1] if seed_time_values else 0.0
-    MAX_NOTES = 5000  # safety cap in case dt keeps sampling to 0 and elapsed never advances
 
-    while elapsed < targetSeconds and len(generated_notes) < MAX_NOTES:
-        print( "in while loop. Elapsed:", elapsed, flush=True )
-        print( "len(generated_notes)", len(generated_notes), flush=True )
+    while len(generated_notes) < target_notes:
+        print( "in while loop. len(generated_notes)", len(generated_notes), flush=True )
         print( "current_time_value:", current_time_value )
-        print( "target seconds", targetSeconds)
+        print( "target notes", target_notes)
 
         if len(window_toks) + tokens_per_note > MAX_SEQ_LEN:
             window_toks   = window_toks[tokens_per_note:]
@@ -558,10 +550,9 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperatur
         generated_notes.append((pitch, vel, dt, sus))
         recent_pitches = (recent_pitches + [pitch])[-32:]
 
-        elapsed += dt * seconds_per_bin
-        current_time_value = min(1.0, elapsed / targetSeconds)
+        current_time_value = min(1.0, len(generated_notes) / target_notes)
 
-    print("elapsed:", elapsed)
+    print("generated notes:", len(generated_notes))
 
     return [(n[0], n[1], n[2], n[3]) for n in seedSong] + generated_notes
 

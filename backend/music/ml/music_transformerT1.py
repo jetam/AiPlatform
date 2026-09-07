@@ -19,7 +19,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 from .music_config import (
     PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
-    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, TARGET_SECONDS,
+    MAX_PITCH, MAX_VELOCITY, MAX_DURATION,
 )
 
 TOKEN_VOCAB = PITCH_VOCAB * VEL_VOCAB * DT_VOCAB
@@ -230,8 +230,8 @@ class MusicTransformerT1(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
-        return compose(self, seedSong, targetSeconds=targetSeconds, maxTime=maxTime)
+    def generate(self, seedSong):
+        return compose(self, seedSong)
 
 
 def loss_fn(logits, targets):
@@ -408,9 +408,10 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=4, lr=1e-5):
 
 
 @torch.no_grad()
-def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperature=1.0, top_p=0.9):
+def compose(model, seedSong, temperature=1.0, top_p=0.9):
     model.eval()
 
+    target_notes = len(seedSong)
     seedSong = seedSong[:SEED_NOTES]
 
     tokens  = torch.tensor(
@@ -429,16 +430,8 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperatur
     ).unsqueeze(0)
 
 
-    seconds_per_bin = maxTime / MAX_TIME
-
-    elapsed = 0.0
-    seed_elapsed = [0.0]
-    for n in seedSong[1:]:
-        elapsed += n[2] * seconds_per_bin
-        seed_elapsed.append(elapsed)
-
     times = torch.tensor(
-        [min(1.0, t / targetSeconds) for t in seed_elapsed],
+        [min(1.0, i / target_notes) for i in range(len(seedSong))],
         dtype=torch.float32, device=DEVICE
     ).unsqueeze(0).unsqueeze(-1)
 
@@ -453,9 +446,10 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperatur
         return sorted_idx.gather(-1, chosen).item()
 
     generated = []  # full history of generated (non-seed) notes - never trimmed, unlike the sliding window below
-    MAX_NOTES = 5000  # safety cap in case dt keeps sampling to 0 and elapsed never advances
 
-    while elapsed < targetSeconds and len(generated) < MAX_NOTES:
+    while len(generated) < target_notes:
+        print("in while loop. len(generated_notes)", len(generated), flush=True)
+        print("target notes", target_notes)
 
         rel = torch.zeros_like(pitches)
         rel[:, 1:] = pitches[:, 1:] - pitches[:, :-1]
@@ -489,10 +483,9 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperatur
 
         pitch = min(pc + po * 12, 127)
 
-        elapsed += dt * seconds_per_bin
-        time_value = min(1.0, elapsed / targetSeconds)
-
         generated.append((pitch, vel, dt, sus))
+
+        time_value = min(1.0, len(generated) / target_notes)
 
         next_tok   = torch.tensor([[encode_token(pitch, vel, dt)]], dtype=torch.long, device=DEVICE)
         next_pitch = torch.tensor([[pitch]], dtype=torch.long, device=DEVICE)
@@ -506,7 +499,7 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperatur
         sustains = torch.cat([sustains, next_sus],   dim=1)[:, -MAX_SEQ_LEN:]
         times    = torch.cat([times,    next_time],  dim=1)[:, -MAX_SEQ_LEN:]
 
-    print("elapsed:", elapsed)
+    print("generated notes:", len(generated))
 
     return [(n[0], n[1], n[2], n[3]) for n in seedSong] + generated
 

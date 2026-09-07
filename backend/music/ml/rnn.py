@@ -19,7 +19,7 @@ MODEL_NUM = 1
 
 from .music_config import (
     PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
-    MAX_PITCH, MAX_VELOCITY, MAX_TIME, MAX_DURATION, TARGET_SECONDS,
+    MAX_PITCH, MAX_VELOCITY, MAX_DURATION,
 )
 
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -141,8 +141,8 @@ class MusicRNN(BaseMusicModel):
         fineTune(self, song)
         return self
 
-    def generate(self, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
-        return compose(self, seedSong, targetSeconds=targetSeconds, maxTime=maxTime)
+    def generate(self, seedSong):
+        return compose(self, seedSong)
 
 
 def _rnn_losses(model, notes, others, times, ce):
@@ -345,24 +345,17 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=16, lr=3e-5):
     return model
 
 @torch.no_grad() # do not compute gradients
-def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
+def compose(model, seedSong):
 
     model = model.to(DEVICE)
     model.eval()
 
+    target_notes = len(seedSong)
     seedSong = seedSong[:SEED_NOTES]
 
     seq_notes = [n[0] for n in seedSong]
     seq_others = [[n[1], n[2], n[3]] for n in seedSong]
-
-    seconds_per_bin = maxTime / MAX_TIME
-    elapsed = 0.0
-    seed_elapsed = [0.0]
-    for n in seedSong[1:]:
-        elapsed += n[2] * seconds_per_bin
-        seed_elapsed.append(elapsed)
-
-    seq_times = [[min(1.0, t / targetSeconds)] for t in seed_elapsed]
+    seq_times = [[min(1.0, i / target_notes)] for i in range(len(seedSong))]
 
     generated = []
 
@@ -370,9 +363,7 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
         probs = torch.softmax(logits / temp, dim=-1)
         return torch.multinomial(probs, 1).item() # Turns raw model scores into probabilities
 
-    MAX_NOTES = 5000  # safety cap in case dt keeps sampling to 0 and elapsed never advances
-
-    while elapsed < targetSeconds and len(generated) < MAX_NOTES:
+    while len(generated) < target_notes:
 
         n = torch.tensor([seq_notes], dtype=torch.long, device=DEVICE)
         o = torch.tensor([seq_others], dtype=torch.long, device=DEVICE)
@@ -390,8 +381,7 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
 
         generated.append((next_note, vel, dt, sus))
 
-        elapsed += dt * seconds_per_bin
-        time_value = min(1.0, elapsed / targetSeconds)
+        time_value = min(1.0, len(generated) / target_notes)
 
         seq_notes.append(next_note) # update context
         seq_others.append([vel, dt, sus])
@@ -403,7 +393,7 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1):
             seq_others = seq_others[-SEQUENCE_LENGTH:]
             seq_times = seq_times[-SEQUENCE_LENGTH:]
 
-    print("elapsed:", elapsed)
+    print("generated notes:", len(generated))
 
     return [(n[0], n[1], n[2], n[3]) for n in seedSong] + generated
 

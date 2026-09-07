@@ -1,1 +1,320 @@
 start server
+Received file: Mariage_dAmour.mid
+Size of midi file: 10731
+Parsing MIDI from memory...
+INFO:     127.0.0.1:38094 - "POST /api/music/midi/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38094 - "GET /api/music/model/selection HTTP/1.1" 200 OK
+Loading Transformer 1
+[fine-tune] epoch 1 | loss 27.0608
+[fine-tune] epoch 2 | loss 26.2037
+[fine-tune] epoch 3 | loss 25.8325
+[fine-tune] epoch 4 | loss 24.9246
+end of selectModel. Fine tuning complete
+INFO:     127.0.0.1:47078 - "PUT /api/music/model/select HTTP/1.1" 200 OK
+Generating Music begin
+in while loop. Elapsed: 26.571428571428534
+len(generated_notes) 0
+target seconds 60
+in while loop. Elapsed: 27.063492063492024
+len(generated_notes) 1
+target seconds 60
+in while loop. Elapsed: 27.555555555555515
+len(generated_notes) 2
+target seconds 60
+in while loop. Elapsed: 27.555555555555515
+len(generated_notes) 3
+target seconds 60
+in while loop. Elapsed: 28.047619047619005
+len(generated_notes) 4
+target seconds 60
+in while loop. Elapsed: 28.539682539682495
+len(generated_notes) 5
+target seconds 60
+in while loop. Elapsed: 28.539682539682495
+len(generated_notes) 6
+target seconds 60
+in while loop. Elapsed: 29.031746031745985
+len(generated_notes) 7
+target seconds 60
+in while loop. Elapsed: 29.523809523809476
+len(generated_notes) 8
+target seconds 60
+in while loop. Elapsed: 29.523809523809476
+len(generated_notes) 9
+target seconds 60
+in while loop. Elapsed: 30.015873015872966
+len(generated_notes) 10
+target seconds 60
+in while loop. Elapsed: 30.507936507936456
+len(generated_notes) 11
+target seconds 60
+in while loop. Elapsed: 30.507936507936456
+len(generated_notes) 12
+target seconds 60
+in while loop. Elapsed: 30.999999999999947
+len(generated_notes) 13
+target seconds 60
+in while loop. Elapsed: 31.492063492063437
+len(generated_notes) 14
+target seconds 60
+in while loop. Elapsed: 31.492063492063437
+len(generated_notes) 15
+target seconds 60
+in while loop. Elapsed: 31.984126984126927
+len(generated_notes) 16
+target seconds 60
+in while loop. Elapsed: 32.47619047619042
+len(generated_notes) 17
+target seconds 60
+in while loop. Elapsed: 32.47619047619042
+len(generated_notes) 18
+target seconds 60
+in while loop. Elapsed: 32.96825396825391
+len(generated_notes) 19
+target seconds 60
+in while loop. Elapsed: 33.460317460317405
+len(generated_notes) 20
+target seconds 60
+in while loop. Elapsed: 33.460317460317405
+len(generated_notes) 21
+target seconds 60
+in while loop. Elapsed: 33.9523809523809
+len(generated_notes) 22
+target seconds 60
+in while loop. Elapsed: 34.44444444444439
+len(generated_notes) 23
+target seconds 60
+in while loop. Elapsed: 34.44444444444439
+len(generated_notes) 24
+target seconds 60
+in while loop. Elapsed: 34.93650793650789
+len(generated_notes) 25
+target seconds 60
+in while loop. Elapsed: 35.42857142857138
+len(generated_notes) 26
+target seconds 60
+in while loop. Elapsed: 35.42857142857138
+len(generated_notes) 27
+target seconds 60
+in while loop. Elapsed: 35.920634920634875
+len(generated_notes) 28
+target seconds 60
+in while loop. Elapsed: 36.41269841269837
+len(generated_notes) 29
+target seconds 60
+in while loop. Elapsed: 36.41269841269837
+len(generated_notes) 30
+target seconds 60
+in while loop. Elapsed: 36.90476190476186
+len(generated_notes) 31
+target seconds 60
+in while loop. Elapsed: 37.396825396825356
+len(generated_notes) 32
+target seconds 60
+in while loop. Elapsed: 37.396825396825356
+len(generated_notes) 33
+target seconds 60
+in while loop. Elapsed: 37.88888888888885
+len(generated_notes) 34
+target seconds 60
+in while loop. Elapsed: 38.380952380952344
+len(generated_notes) 35
+target seconds 60
+in while loop. Elapsed: 38.380952380952344
+len(generated_notes) 36
+target seconds 60
+in while loop. Elapsed: 38.87301587301584
+len(generated_notes) 37
+target seconds 60
+in while loop. Elapsed: 39.36507936507933
+len(generated_notes) 38
+target seconds 60
+in while loop. Elapsed: 39.36507936507933
+len(generated_notes) 39
+target seconds 60
+in while loop. Elapsed: 39.857142857142826
+len(generated_notes) 40
+target seconds 60
+in while loop. Elapsed: 40.34920634920632
+len(generated_notes) 41
+target seconds 60
+in while loop. Elapsed: 40.34920634920632
+len(generated_notes) 42
+target seconds 60
+in while loop. Elapsed: 40.84126984126981
+len(generated_notes) 43
+target seconds 60
+in while loop. Elapsed: 41.33333333333331
+len(generated_notes) 44
+target seconds 60
+in while loop. Elapsed: 41.33333333333331
+len(generated_notes) 45
+target seconds 60
+in while loop. Elapsed: 41.8253968253968
+len(generated_notes) 46
+target seconds 60
+in while loop. Elapsed: 42.317460317460295
+len(generated_notes) 47
+target seconds 60
+in while loop. Elapsed: 42.317460317460295
+len(generated_notes) 48
+target seconds 60
+in while loop. Elapsed: 42.80952380952379
+len(generated_notes) 49
+target seconds 60
+in while loop. Elapsed: 43.30158730158728
+len(generated_notes) 50
+target seconds 60
+in while loop. Elapsed: 43.30158730158728
+len(generated_notes) 51
+target seconds 60
+in while loop. Elapsed: 43.79365079365078
+len(generated_notes) 52
+target seconds 60
+in while loop. Elapsed: 44.28571428571427
+len(generated_notes) 53
+target seconds 60
+in while loop. Elapsed: 44.28571428571427
+len(generated_notes) 54
+target seconds 60
+in while loop. Elapsed: 44.777777777777764
+len(generated_notes) 55
+target seconds 60
+in while loop. Elapsed: 45.26984126984126
+len(generated_notes) 56
+target seconds 60
+in while loop. Elapsed: 45.26984126984126
+len(generated_notes) 57
+target seconds 60
+in while loop. Elapsed: 45.76190476190475
+len(generated_notes) 58
+target seconds 60
+in while loop. Elapsed: 46.253968253968246
+len(generated_notes) 59
+target seconds 60
+in while loop. Elapsed: 46.253968253968246
+len(generated_notes) 60
+target seconds 60
+in while loop. Elapsed: 46.74603174603174
+len(generated_notes) 61
+target seconds 60
+in while loop. Elapsed: 47.238095238095234
+len(generated_notes) 62
+target seconds 60
+in while loop. Elapsed: 47.238095238095234
+len(generated_notes) 63
+target seconds 60
+in while loop. Elapsed: 47.73015873015873
+len(generated_notes) 64
+target seconds 60
+in while loop. Elapsed: 48.22222222222222
+len(generated_notes) 65
+target seconds 60
+in while loop. Elapsed: 48.22222222222222
+len(generated_notes) 66
+target seconds 60
+in while loop. Elapsed: 48.714285714285715
+len(generated_notes) 67
+target seconds 60
+in while loop. Elapsed: 49.20634920634921
+len(generated_notes) 68
+target seconds 60
+in while loop. Elapsed: 49.20634920634921
+len(generated_notes) 69
+target seconds 60
+in while loop. Elapsed: 49.6984126984127
+len(generated_notes) 70
+target seconds 60
+in while loop. Elapsed: 50.1904761904762
+len(generated_notes) 71
+target seconds 60
+in while loop. Elapsed: 50.1904761904762
+len(generated_notes) 72
+target seconds 60
+in while loop. Elapsed: 50.68253968253969
+len(generated_notes) 73
+target seconds 60
+in while loop. Elapsed: 51.174603174603185
+len(generated_notes) 74
+target seconds 60
+in while loop. Elapsed: 51.174603174603185
+len(generated_notes) 75
+target seconds 60
+in while loop. Elapsed: 51.66666666666668
+len(generated_notes) 76
+target seconds 60
+in while loop. Elapsed: 52.15873015873017
+len(generated_notes) 77
+target seconds 60
+in while loop. Elapsed: 52.15873015873017
+len(generated_notes) 78
+target seconds 60
+in while loop. Elapsed: 52.650793650793666
+len(generated_notes) 79
+target seconds 60
+in while loop. Elapsed: 53.14285714285716
+len(generated_notes) 80
+target seconds 60
+in while loop. Elapsed: 53.14285714285716
+len(generated_notes) 81
+target seconds 60
+in while loop. Elapsed: 53.634920634920654
+len(generated_notes) 82
+target seconds 60
+in while loop. Elapsed: 54.12698412698415
+len(generated_notes) 83
+target seconds 60
+in while loop. Elapsed: 54.12698412698415
+len(generated_notes) 84
+target seconds 60
+in while loop. Elapsed: 54.61904761904764
+len(generated_notes) 85
+target seconds 60
+in while loop. Elapsed: 55.111111111111136
+len(generated_notes) 86
+target seconds 60
+in while loop. Elapsed: 55.111111111111136
+len(generated_notes) 87
+target seconds 60
+in while loop. Elapsed: 55.60317460317463
+len(generated_notes) 88
+target seconds 60
+in while loop. Elapsed: 56.09523809523812
+len(generated_notes) 89
+target seconds 60
+in while loop. Elapsed: 56.09523809523812
+len(generated_notes) 90
+target seconds 60
+in while loop. Elapsed: 56.58730158730162
+len(generated_notes) 91
+target seconds 60
+in while loop. Elapsed: 57.07936507936511
+len(generated_notes) 92
+target seconds 60
+in while loop. Elapsed: 57.07936507936511
+len(generated_notes) 93
+target seconds 60
+in while loop. Elapsed: 57.571428571428605
+len(generated_notes) 94
+target seconds 60
+in while loop. Elapsed: 58.0634920634921
+len(generated_notes) 95
+target seconds 60
+in while loop. Elapsed: 58.0634920634921
+len(generated_notes) 96
+target seconds 60
+in while loop. Elapsed: 58.55555555555559
+len(generated_notes) 97
+target seconds 60
+in while loop. Elapsed: 59.04761904761909
+len(generated_notes) 98
+target seconds 60
+in while loop. Elapsed: 59.04761904761909
+len(generated_notes) 99
+target seconds 60
+in while loop. Elapsed: 59.53968253968258
+len(generated_notes) 100
+target seconds 60
+elapsed: 60.031746031746074
+Generating Music end
+INFO:     127.0.0.1:35032 - "POST /api/music/generate HTTP/1.1" 200 OK
