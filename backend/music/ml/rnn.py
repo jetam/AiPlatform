@@ -266,7 +266,7 @@ def loadModel():
 
     return model
 
-def fineTune(model, song, seq_len=64, epochs=2, batch_size=16, lr=3e-5):
+def fineTune(model, song, seq_len=64, epochs=4, batch_size=16, lr=3e-5):
 
     if len(song) <= seq_len:
         raise ValueError(

@@ -7,8 +7,8 @@
     <list default="true" id="3327a86f-5f7c-4ed2-b59e-e239d46e63b0" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/music/ml/music_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/ml/music_config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/services/midi_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/services/midi_parser.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/music/services/midi_tester.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/services/midi_tester.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/music/ml/music_transformerT2.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/ml/music_transformerT2.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/music/services/composer.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/music/services/composer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/server_api.log" beforeDir="false" afterPath="$PROJECT_DIR$/backend/server_api.log" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -19,23 +19,23 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 3
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 3
+}</component>
   <component name="ProjectId" id="3IDqyVsxEnLWoYBmWmZSn4w5TJa" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
-    "git-widget-placeholder": "master"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>

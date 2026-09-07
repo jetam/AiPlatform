@@ -1,15 +1,1 @@
 start server
-Received file: ADELINE.MID
-Size of midi file: 7570
-Parsing MIDI from memory...
-INFO:     127.0.0.1:44624 - "POST /api/music/midi/upload HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44624 - "GET /api/music/model/selection HTTP/1.1" 200 OK
-INFO:     127.0.0.1:44624 - "OPTIONS /api/music/model/select HTTP/1.1" 200 OK
-Loading Transformer 1
-[fine-tune] epoch 1 | loss 35.7726
-[fine-tune] epoch 2 | loss 34.9539
-end of selectModel. Fine tuning complete
-INFO:     127.0.0.1:44624 - "PUT /api/music/model/select HTTP/1.1" 200 OK
-Generating Music begin
-Generating Music end
-INFO:     127.0.0.1:60982 - "POST /api/music/generate HTTP/1.1" 200 OK

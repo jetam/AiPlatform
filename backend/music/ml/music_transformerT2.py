@@ -406,7 +406,7 @@ def loadModel():
     return model
 
 
-def fineTune(model, song, notes_per_chunk=64, epochs=2, batch_size=4, lr=1e-5):
+def fineTune(model, song, notes_per_chunk=64, epochs=4, batch_size=4, lr=1e-5):
 
     if len(song) <= notes_per_chunk + 1:
         raise ValueError(
@@ -464,6 +464,7 @@ def _nucleus_sample(logits, temperature, top_p):
 
 @torch.no_grad()
 def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperature=1.0, top_p=0.9, rep_penalty=1.2):
+    print( "compose begin" )
     model.eval()
 
     seedSong = seedSong[:SEED_NOTES]
@@ -515,6 +516,10 @@ def compose(model, seedSong, targetSeconds=TARGET_SECONDS, maxTime=1, temperatur
     MAX_NOTES = 5000  # safety cap in case dt keeps sampling to 0 and elapsed never advances
 
     while elapsed < targetSeconds and len(generated_notes) < MAX_NOTES:
+        print( "in while loop. Elapsed:", elapsed, flush=True )
+        print( "len(generated_notes)", len(generated_notes), flush=True )
+        print( "current_time_value:", current_time_value )
+        print( "target seconds", targetSeconds)
 
         if len(window_toks) + tokens_per_note > MAX_SEQ_LEN:
             window_toks   = window_toks[tokens_per_note:]

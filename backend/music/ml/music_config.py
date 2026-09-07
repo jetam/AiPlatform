@@ -16,4 +16,4 @@ MAX_SUSTAIN = SUS_VOCAB - 1
 
 # DT_MAX_SECONDS = 2.0 # todo: this should be set at fine tuning. fine tune song gets parsed and its dt_max should be used on the generated song
 
-TARGET_SECONDS = 180  # fixed generation length.
+TARGET_SECONDS = 60  # fixed generation length.
