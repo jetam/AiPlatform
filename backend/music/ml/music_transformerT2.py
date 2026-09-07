@@ -19,43 +19,50 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 
 from .music_config import (
-    PITCH_CLASS_VOCAB, OCTAVE_VOCAB, PITCH_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
+    PITCH_CLASS_VOCAB, OCTAVE_VOCAB, VEL_VOCAB, DT_VOCAB, DUR_VOCAB, SUS_VOCAB,
     MAX_PITCH, MAX_VELOCITY, MAX_DURATION,
 )
 
-# REMI-style token layout — each note produces 4 tokens in sequence
-PAD       = 0
-BOS       = 1
-PITCH_OFF = 2                          # tokens  2..129  (128 pitches)
-VEL_OFF   = PITCH_OFF + PITCH_VOCAB    # tokens 130..138  (9 velocities)
-DT_OFF    = VEL_OFF + VEL_VOCAB        # tokens 139..202  (64 dt values)
-SUS_OFF   = DT_OFF + DT_VOCAB          # tokens 203..204  (2 sustain states)
+# REMI-style token layout — each note produces 5 tokens in sequence.
+# Pitch is split into pitch-class (0-11) + octave instead of one flat 128-way
+# token, so octave-equivalent notes share embedding/output structure and the
+# model has an explicit signal for tonal relationships.
+PAD     = 0
+BOS     = 1
+PC_OFF  = 2                                # tokens  2..13   (12 pitch classes)
+OCT_OFF = PC_OFF  + PITCH_CLASS_VOCAB      # tokens 14..24   (11 octaves)
+VEL_OFF = OCT_OFF + OCTAVE_VOCAB           # tokens 25..33   (9 velocities)
+DT_OFF  = VEL_OFF + VEL_VOCAB              # tokens 34..97   (64 dt values)
+SUS_OFF = DT_OFF  + DT_VOCAB               # tokens 98..99   (2 sustain states)
 VOCAB_SIZE = SUS_OFF + SUS_VOCAB
 
 # Token type IDs
-T_PITCH, T_VEL, T_DT, T_SUS = 0, 1, 2, 3
-TYPE_CYCLE = [T_PITCH, T_VEL, T_DT, T_SUS]
+T_PC, T_OCT, T_VEL, T_DT, T_SUS = 0, 1, 2, 3, 4
+TYPE_CYCLE = [T_PC, T_OCT, T_VEL, T_DT, T_SUS]
 
 # Valid token index range per type — used to mask sampling
 VALID_RANGE = {
-    T_PITCH: (PITCH_OFF, PITCH_OFF + PITCH_VOCAB),
-    T_VEL:   (VEL_OFF,   VEL_OFF   + VEL_VOCAB),
-    T_DT:    (DT_OFF,    DT_OFF   + DT_VOCAB),
-    T_SUS:   (SUS_OFF,   SUS_OFF   + SUS_VOCAB),
+    T_PC:  (PC_OFF,  PC_OFF  + PITCH_CLASS_VOCAB),
+    T_OCT: (OCT_OFF, OCT_OFF + OCTAVE_VOCAB),
+    T_VEL: (VEL_OFF, VEL_OFF + VEL_VOCAB),
+    T_DT:  (DT_OFF,  DT_OFF  + DT_VOCAB),
+    T_SUS: (SUS_OFF, SUS_OFF + SUS_VOCAB),
 }
 
-MAX_SEQ_LEN = 1024  # tokens (~256 notes)
+MAX_SEQ_LEN = 1024  # tokens (~204 notes)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def encode_note(pitch: int, vel: int, dt: int, sustain: int):
-    """One note → 4 REMI tokens."""
-    return [PITCH_OFF + pitch, VEL_OFF + vel, DT_OFF + dt, SUS_OFF + sustain]
+    """One note → 5 REMI tokens."""
+    pc, octv = pitch % 12, pitch // 12
+    return [PC_OFF + pc, OCT_OFF + octv, VEL_OFF + vel, DT_OFF + dt, SUS_OFF + sustain]
 
 
-def decode_note(pitch_tok: int, vel_tok: int, dt_tok: int, sus_tok: int):
-    return (pitch_tok - PITCH_OFF, vel_tok - VEL_OFF, dt_tok - DT_OFF, sus_tok - SUS_OFF)
+def decode_note(pc_tok: int, oct_tok: int, vel_tok: int, dt_tok: int, sus_tok: int):
+    pitch = min((pc_tok - PC_OFF) + (oct_tok - OCT_OFF) * 12, MAX_PITCH)
+    return (pitch, vel_tok - VEL_OFF, dt_tok - DT_OFF, sus_tok - SUS_OFF)
 
 
 class MusicDataset(Dataset):
@@ -81,7 +88,7 @@ class MusicDataset(Dataset):
         if shift != 0:
             chunk = [(max(0, min(127, p + shift)), v, d, s, tm) for p, v, d, s, tm in chunk]
 
-        # tokenize: (notes_per_chunk+1) notes → (notes_per_chunk+1)*4 tokens
+        # tokenize: (notes_per_chunk+1) notes → (notes_per_chunk+1)*len(TYPE_CYCLE) tokens
         toks = []
         note_times = []
         for note in chunk:
@@ -211,7 +218,7 @@ class TransformerLayer(nn.Module):
 
 
 class MusicTransformerT2(BaseMusicModel):
-    def __init__(self, d_model=256, nhead=8, num_layers=4, dropout=0.1):
+    def __init__(self, d_model=512, nhead=8, num_layers=8, dropout=0.1):
         super().__init__()
 
         self.tok_emb  = nn.Embedding(VOCAB_SIZE, d_model)
@@ -520,16 +527,16 @@ def compose(model, seedSong, temperature=1.0, top_p=0.9, rep_penalty=1.2):
             next_logits, cache = prefill(window_toks, window_types, window_times)
 
         note_toks = []
-        # same time value feeds all 4 sub-tokens of this note - only known once dt is sampled
+        # same time value feeds all 5 sub-tokens of this note - only known once dt is sampled
         time_tensor = torch.tensor([[[current_time_value]]], dtype=torch.float32, device=DEVICE)
 
-        for tok_type in TYPE_CYCLE:   # generate PITCH → VEL → DT
+        for tok_type in TYPE_CYCLE:   # generate PC → OCT → VEL → DT → SUS
             logits = next_logits + type_masks[tok_type]
 
-            # repetition penalty on pitch tokens only
-            if tok_type == T_PITCH:
-                for p in set(recent_pitches):
-                    idx = PITCH_OFF + p
+            # repetition penalty on pitch-class tokens only, keyed by recent pitches' class
+            if tok_type == T_PC:
+                for pc in {p % 12 for p in recent_pitches}:
+                    idx = PC_OFF + pc
                     logits[idx] = logits[idx] * rep_penalty if logits[idx] < 0 else logits[idx] / rep_penalty
 
             tok = _nucleus_sample(logits, temperature, top_p)

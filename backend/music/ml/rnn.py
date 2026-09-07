@@ -73,8 +73,8 @@ class MusicRNN(BaseMusicModel):
         vel_vocab=VEL_VOCAB,
         dt_vocab=DT_VOCAB,
         sus_vocab=SUS_VOCAB,
-        hidden_size=256, # number of features (or dimensions) in the hidden state vector
-        num_layers=2,
+        hidden_size=512, # number of features (or dimensions) in the hidden state vector
+        num_layers=3,
         dropout=0.1,
     ):
         super().__init__()
@@ -173,14 +173,15 @@ def _rnn_losses(model, notes, others, times, ce):
 
 
 @torch.no_grad()
-def evaluate(model, loader, ce):
+def evaluate(model, loader, ce, use_amp):
     model.eval()
     total = 0.0
     count = 0
 
     for notes, others, times in loader:
         notes, others, times = notes.to(DEVICE), others.to(DEVICE), times.to(DEVICE)
-        loss = _rnn_losses(model, notes, others, times, ce)
+        with torch.amp.autocast('cuda', enabled=use_amp):
+            loss = _rnn_losses(model, notes, others, times, ce)
         total += loss.item()
         count += 1
 
@@ -190,9 +191,11 @@ def evaluate(model, loader, ce):
 
 def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=200, checkpoint_every=1):
 
+    use_amp = torch.cuda.is_available()
     model = model.to(DEVICE)
     opt = torch.optim.Adam(model.parameters(), lr=lr) # updates weights using gradients
     ce = nn.CrossEntropyLoss() # used because all outputs are classification problems
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     total_steps = epochs * len(dataloader)
 
@@ -220,14 +223,16 @@ def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=2
         for batch_idx, (notes, others, times) in enumerate(dataloader, start=1):
             notes, others, times = notes.to(DEVICE), others.to(DEVICE), times.to(DEVICE)
 
-            loss = _rnn_losses(model, notes, others, times, ce)
+            opt.zero_grad(set_to_none=True)
 
-            opt.zero_grad()
-            loss.backward()
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                loss = _rnn_losses(model, notes, others, times, ce)
 
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0) # gradient clipping
-
-            opt.step()
+            scaler.step(opt)
+            scaler.update()
             scheduler.step()
 
             total += loss.item()
@@ -239,7 +244,7 @@ def train(model, dataloader, val_loader=None, epochs=10, lr=1e-3, warmup_steps=2
 
         val_loss = None
         if val_loader is not None:
-            val_loss = evaluate(model, val_loader, ce)
+            val_loss = evaluate(model, val_loader, ce, use_amp)
             msg += f" | val loss {val_loss:.4f}"
 
         print(msg, flush=True)
@@ -274,6 +279,7 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=16, lr=3e-5):
             f"seq_len={seq_len} notes."
         )
 
+    use_amp = torch.cuda.is_available()
     model = model.to(DEVICE)
     model.train()
 
@@ -291,6 +297,7 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=16, lr=3e-5):
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     loss_fn = nn.CrossEntropyLoss()
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     for epoch in range(epochs):
         total_loss = 0.0
@@ -298,45 +305,47 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=16, lr=3e-5):
         for notes, others, times in loader:
             notes, others, times = notes.to(DEVICE), others.to(DEVICE), times.to(DEVICE)
 
-            pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
-
-            # split ground truth
-            pc = notes % 12
-            octv = notes // 12
-
-            loss_pc = loss_fn(
-                pc_logits[:, :-1].reshape(-1, 12),
-                pc[:, 1:].reshape(-1)
-            )
-
-            loss_oct = loss_fn(
-                oct_logits[:, :-1].reshape(-1, 11),
-                octv[:, 1:].reshape(-1)
-            )
-
-            loss_vel = loss_fn(
-                vel_logits[:, :-1].reshape(-1, vel_logits.size(-1)),
-                others[:, 1:, 0].reshape(-1)
-            )
-
-            loss_dt = loss_fn(
-                dt_logits[:, :-1].reshape(-1, dt_logits.size(-1)),
-                others[:, 1:, 1].reshape(-1)
-            )
-
-            loss_sus = loss_fn(
-                sus_logits[:, :-1].reshape(-1, sus_logits.size(-1)),
-                others[:, 1:, 2].reshape(-1)
-            )
-
-            loss = 2 * loss_pc + loss_oct + loss_vel + loss_dt + loss_sus
-
             optimizer.zero_grad()
-            loss.backward()
 
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
+
+                # split ground truth
+                pc = notes % 12
+                octv = notes // 12
+
+                loss_pc = loss_fn(
+                    pc_logits[:, :-1].reshape(-1, 12),
+                    pc[:, 1:].reshape(-1)
+                )
+
+                loss_oct = loss_fn(
+                    oct_logits[:, :-1].reshape(-1, 11),
+                    octv[:, 1:].reshape(-1)
+                )
+
+                loss_vel = loss_fn(
+                    vel_logits[:, :-1].reshape(-1, vel_logits.size(-1)),
+                    others[:, 1:, 0].reshape(-1)
+                )
+
+                loss_dt = loss_fn(
+                    dt_logits[:, :-1].reshape(-1, dt_logits.size(-1)),
+                    others[:, 1:, 1].reshape(-1)
+                )
+
+                loss_sus = loss_fn(
+                    sus_logits[:, :-1].reshape(-1, sus_logits.size(-1)),
+                    others[:, 1:, 2].reshape(-1)
+                )
+
+                loss = 2 * loss_pc + loss_oct + loss_vel + loss_dt + loss_sus
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
 
             total_loss += loss.item()
 

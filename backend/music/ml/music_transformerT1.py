@@ -156,7 +156,7 @@ class RelativeTransformerLayer(nn.Module):
 class MusicTransformerT1(BaseMusicModel):
     COND_DIM = 32
 
-    def __init__(self, d_model=256, nhead=8, num_layers=6, dropout=0.1):
+    def __init__(self, d_model=384, nhead=8, num_layers=8, dropout=0.1):
         super().__init__()
 
         self.tok_emb       = nn.Embedding(TOKEN_VOCAB, d_model)
