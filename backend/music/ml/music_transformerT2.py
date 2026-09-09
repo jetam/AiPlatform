@@ -66,7 +66,10 @@ def decode_note(pc_tok: int, oct_tok: int, vel_tok: int, dt_tok: int, sus_tok: i
 
 
 class MusicDataset(Dataset):
-    def __init__(self, songs, notes_per_chunk=64, augment=True):
+    # 200 notes * 5 tokens/note = ~1000 tokens, close to MAX_SEQ_LEN (1024) so
+    # training exposes the model to roughly the same context length generation
+    # actually uses, instead of training on much shorter windows than it sees at inference
+    def __init__(self, songs, notes_per_chunk=200, augment=True):
         self.notes_per_chunk = notes_per_chunk
         self.augment = augment
         self.data = []
@@ -413,7 +416,7 @@ def loadModel():
     return model
 
 
-def fineTune(model, song, notes_per_chunk=64, epochs=4, batch_size=4, lr=1e-5):
+def fineTune(model, song, notes_per_chunk=200, epochs=4, batch_size=4, lr=1e-5):
 
     if len(song) <= notes_per_chunk + 1:
         raise ValueError(

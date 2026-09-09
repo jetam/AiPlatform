@@ -110,7 +110,7 @@ class RelativeAttention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, causal_mask):
+    def forward(self, x, cache=None):
         B, T, _ = x.shape
         H, D = self.nhead, self.d_k
 
@@ -118,19 +118,36 @@ class RelativeAttention(nn.Module):
         K = self.k(x).view(B, T, H, D).permute(0, 2, 1, 3)
         V = self.v(x).view(B, T, H, D).permute(0, 2, 1, 3)
 
-        content = torch.matmul(Q, K.transpose(-2, -1)) / self.scale  # [B, H, T, T]
+        # unlike RoPE, no position info is baked into K/V here - the relative
+        # term below is recomputed fresh from bookkeeping indices every call,
+        # so cached keys/values can be concatenated (and later trimmed) as-is
+        pos_offset = cache[0].shape[2] if cache is not None else 0
+        if cache is not None:
+            K = torch.cat([cache[0], K], dim=2)
+            V = torch.cat([cache[1], V], dim=2)
+        new_cache = (K, V)
 
-        # dist[i, j] = i - j  (how far query i looks back to key j)
-        idx = torch.arange(T, device=x.device)
-        dist = (idx.unsqueeze(1) - idx.unsqueeze(0)).clamp(min=0, max=MAX_SEQ_LEN - 1)  # [T, T]
-        R = self.rel_pos_emb(dist)                                     # [T, T, D]
-        positional = torch.einsum('bhid,ijd->bhij', Q, R) / self.scale # [B, H, T, T]
+        Tk = K.shape[2]
+        content = torch.matmul(Q, K.transpose(-2, -1)) / self.scale  # [B, H, T, Tk]
 
-        attn = (content + positional).masked_fill(causal_mask, float('-inf'))
+        # dist[i, j] = (pos_offset + i) - j  (how far query i looks back to key j)
+        q_idx = torch.arange(pos_offset, pos_offset + T, device=x.device)
+        k_idx = torch.arange(Tk, device=x.device)
+        dist = (q_idx.unsqueeze(1) - k_idx.unsqueeze(0)).clamp(min=0, max=MAX_SEQ_LEN - 1)  # [T, Tk]
+        R = self.rel_pos_emb(dist)                                     # [T, Tk, D]
+        positional = torch.einsum('bhid,ijd->bhij', Q, R) / self.scale # [B, H, T, Tk]
+
+        attn = content + positional
+        if cache is None:
+            # prefill (T queries over T keys, all fresh this call) needs the
+            # causal mask; a cached decode step (1 new query over all past+self
+            # keys) is always causally valid, nothing to mask
+            causal_mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1).bool()
+            attn = attn.masked_fill(causal_mask, float('-inf'))
         attn = self.dropout(F.softmax(attn, dim=-1))
 
         out = torch.matmul(attn, V).permute(0, 2, 1, 3).contiguous().view(B, T, H * D)
-        return self.out(out)
+        return self.out(out), new_cache
 
 
 class RelativeTransformerLayer(nn.Module):
@@ -147,10 +164,11 @@ class RelativeTransformerLayer(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
         self.drop  = nn.Dropout(dropout)
 
-    def forward(self, x, causal_mask):
-        x = x + self.drop(self.attn(self.norm1(x), causal_mask))
+    def forward(self, x, cache=None):
+        attn_out, new_cache = self.attn(self.norm1(x), cache=cache)
+        x = x + self.drop(attn_out)
         x = x + self.ff(self.norm2(x))
-        return x
+        return x, new_cache
 
 
 class MusicTransformerT1(BaseMusicModel):
@@ -184,17 +202,16 @@ class MusicTransformerT1(BaseMusicModel):
         self.out_d   = nn.Linear(d_model + d_cond * 3, DT_VOCAB)
         self.out_sus = nn.Linear(d_model + d_cond * 4, SUS_VOCAB)
 
-    def causal_mask(self, T, device):
-        return torch.triu(torch.ones(T, T, device=device), diagonal=1).bool()
-
-    def encode(self, tokens, rel_pitch, sustain, time):
+    def encode(self, tokens, rel_pitch, sustain, time, cache=None):
         x = self.tok_emb(tokens) + self.rel_pitch_emb(rel_pitch) + self.sus_emb(sustain) + self.time_proj(time)
 
-        mask = self.causal_mask(x.size(1), x.device)
-        for layer in self.layers:
-            x = layer(x, mask)
+        new_cache = []
+        for i, layer in enumerate(self.layers):
+            layer_cache = cache[i] if cache is not None else None
+            x, updated = layer(x, cache=layer_cache)
+            new_cache.append(updated)
 
-        return self.norm(x)
+        return self.norm(x), new_cache
 
     def decode_heads(self, h, pc=None, po=None, v=None, dt=None):
         # p(pc,po,v,dt,sus|h) = p(pc|h) p(po|h,pc) p(v|h,pc,po) p(dt|h,pc,po,v) p(sus|h,pc,po,v,dt)
@@ -223,7 +240,7 @@ class MusicTransformerT1(BaseMusicModel):
         return pc_logits, po_logits, v_logits, d_logits, sus_logits
 
     def forward(self, tokens, rel_pitch, sustain, time, pc=None, po=None, v=None, dt=None):
-        h = self.encode(tokens, rel_pitch, sustain, time)
+        h, _ = self.encode(tokens, rel_pitch, sustain, time)
         return self.decode_heads(h, pc=pc, po=po, v=v, dt=dt)
 
     def fineTune(self, song):
@@ -262,13 +279,14 @@ def _t1_batch_loss(model, batch):
 
 
 @torch.no_grad()
-def evaluate(model, loader):
+def evaluate(model, loader, use_amp):
     model.eval()
     total = 0.0
     count = 0
 
     for batch in loader:
-        loss = _t1_batch_loss(model, batch)
+        with torch.amp.autocast('cuda', enabled=use_amp):
+            loss = _t1_batch_loss(model, batch)
         total += loss.item()
         count += 1
 
@@ -277,6 +295,7 @@ def evaluate(model, loader):
 
 
 def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_split=0.1, checkpoint_every=1):
+    use_amp = torch.cuda.is_available()
     model = model.to(DEVICE)
 
     shuffled = songs[:]
@@ -293,6 +312,7 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     total_steps = epochs * len(loader)
 
@@ -318,11 +338,16 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
         total = 0
 
         for batch_idx, batch in enumerate(loader, start=1):
-            loss = _t1_batch_loss(model, batch)
-
             opt.zero_grad()
-            loss.backward()
-            opt.step()
+
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                loss = _t1_batch_loss(model, batch)
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.step(opt)
+            scaler.update()
             scheduler.step()
 
             total += loss.item()
@@ -334,7 +359,7 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
 
         val_loss = None
         if val_loader is not None:
-            val_loss = evaluate(model, val_loader)
+            val_loss = evaluate(model, val_loader, use_amp)
             msg += f" | val loss {val_loss:.4f}"
 
         print(msg, flush=True)
@@ -364,8 +389,15 @@ def loadModel():
     return model
 
 
-def fineTune(model, song, seq_len=64, epochs=4, batch_size=4, lr=1e-5):
+def fineTune(model, song, seq_len=256, epochs=4, batch_size=4, lr=1e-5):
 
+    if len(song) <= seq_len:
+        raise ValueError(
+            f"Seed song has {len(song)} notes, but fine-tuning needs more than "
+            f"seq_len={seq_len} notes."
+        )
+
+    use_amp = torch.cuda.is_available()
     model = model.to(DEVICE)
     model.train()
 
@@ -376,6 +408,7 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=4, lr=1e-5):
     # smaller, constant LR than pretraining — no warmup/cosine schedule needed
     # for a short fine-tune run
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     for epoch in range(epochs):
         total = 0
@@ -390,15 +423,17 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=4, lr=1e-5):
                 y_v.to(DEVICE), y_d.to(DEVICE), y_sus.to(DEVICE)
             )
 
-            logits = model(x_tok, x_rel, x_sus, x_time, pc=y_pc, po=y_po, v=y_v, dt=y_d)
-            loss = loss_fn(logits, (y_pc, y_po, y_v, y_d, y_sus))
-
             opt.zero_grad()
-            loss.backward()
 
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                logits = model(x_tok, x_rel, x_sus, x_time, pc=y_pc, po=y_po, v=y_v, dt=y_d)
+                loss = loss_fn(logits, (y_pc, y_po, y_v, y_d, y_sus))
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-            opt.step()
+            scaler.step(opt)
+            scaler.update()
 
             total += loss.item()
 
@@ -414,27 +449,6 @@ def compose(model, seedSong, temperature=1.0, top_p=0.9):
     target_notes = len(seedSong)
     seedSong = seedSong[:SEED_NOTES]
 
-    tokens  = torch.tensor(
-        [encode_token(n[0], n[1], n[2]) for n in seedSong],
-        dtype=torch.long, device=DEVICE
-    ).unsqueeze(0)
-
-    pitches = torch.tensor(
-        [n[0] for n in seedSong],
-        dtype=torch.long, device=DEVICE
-    ).unsqueeze(0)
-
-    sustains = torch.tensor(
-        [n[3] for n in seedSong],
-        dtype=torch.long, device=DEVICE
-    ).unsqueeze(0)
-
-
-    times = torch.tensor(
-        [min(1.0, i / target_notes) for i in range(len(seedSong))],
-        dtype=torch.float32, device=DEVICE
-    ).unsqueeze(0).unsqueeze(-1)
-
     def sample(logits):
         probs = F.softmax(logits[:, -1] / temperature, dim=-1)  # [1, vocab]
         sorted_probs, sorted_idx = torch.sort(probs, descending=True)
@@ -445,23 +459,34 @@ def compose(model, seedSong, temperature=1.0, top_p=0.9):
         chosen = torch.multinomial(sorted_probs, 1)
         return sorted_idx.gather(-1, chosen).item()
 
-    generated = []  # full history of generated (non-seed) notes - never trimmed, unlike the sliding window below
+    # feed one note through the model, extending the KV-cache by one position
+    def encode_step(pitch, vel, dt, sustain, time_value, prev_pitch, cache):
+        tok = torch.tensor([[encode_token(pitch, vel, dt)]], dtype=torch.long, device=DEVICE)
+        rel_val = 64 if prev_pitch is None else max(0, min(127, (pitch - prev_pitch) + 64))
+        rel = torch.tensor([[rel_val]], dtype=torch.long, device=DEVICE)
+        sus = torch.tensor([[sustain]], dtype=torch.long, device=DEVICE)
+        tm = torch.tensor([[[time_value]]], dtype=torch.float32, device=DEVICE)
+        h, cache = model.encode(tok, rel, sus, tm, cache=cache)
+        return h, cache
+
+    # prefill: run the seed context through once to build the KV-cache
+    cache = None
+    h_last = None
+    prev_pitch = None
+    for i, note in enumerate(seedSong):
+        time_value = min(1.0, i / target_notes)
+        h_last, cache = encode_step(note[0], note[1], note[2], note[3], time_value, prev_pitch, cache)
+        prev_pitch = note[0]
+
+    generated = []
 
     while len(generated) < target_notes:
-        print("in while loop. len(generated_notes)", len(generated), flush=True)
-        print("target notes", target_notes)
+        h = h_last[:, -1:, :]  # [1, 1, d_model] — only the next note matters
 
-        rel = torch.zeros_like(pitches)
-        rel[:, 1:] = pitches[:, 1:] - pitches[:, :-1]
-        rel = torch.clamp(rel + 64, 0, 127)
-
-        h = model.encode(tokens, rel, sustains, times)
-        h_last = h[:, -1:, :]  # [1, 1, d_model] — only the next note matters
-
-        pc_logits = model.out_pc(h_last)
+        pc_logits = model.out_pc(h)
         pc = sample(pc_logits)                                              # 0-11
         pc_t = torch.tensor([[pc]], dtype=torch.long, device=DEVICE)
-        h_po = torch.cat([h_last, model.pc_cond(pc_t)], dim=-1)
+        h_po = torch.cat([h, model.pc_cond(pc_t)], dim=-1)
 
         po_logits = model.out_po(h_po)
         po = sample(po_logits)                                              # 0-10
@@ -487,17 +512,14 @@ def compose(model, seedSong, temperature=1.0, top_p=0.9):
 
         time_value = min(1.0, len(generated) / target_notes)
 
-        next_tok   = torch.tensor([[encode_token(pitch, vel, dt)]], dtype=torch.long, device=DEVICE)
-        next_pitch = torch.tensor([[pitch]], dtype=torch.long, device=DEVICE)
-        next_sus   = torch.tensor([[sus]], dtype=torch.long, device=DEVICE)
-        next_time  = torch.tensor([[[time_value]]], dtype=torch.float32, device=DEVICE)
+        h_last, cache = encode_step(pitch, vel, dt, sus, time_value, prev_pitch, cache)
+        prev_pitch = pitch
 
-        # sliding window: once full, drop the oldest note so the model can keep going
-        # indefinitely instead of hitting MAX_SEQ_LEN and stopping early
-        tokens   = torch.cat([tokens,   next_tok],   dim=1)[:, -MAX_SEQ_LEN:]
-        pitches  = torch.cat([pitches,  next_pitch], dim=1)[:, -MAX_SEQ_LEN:]
-        sustains = torch.cat([sustains, next_sus],   dim=1)[:, -MAX_SEQ_LEN:]
-        times    = torch.cat([times,    next_time],  dim=1)[:, -MAX_SEQ_LEN:]
+        # sliding window: no position info is baked into cached K/V (see
+        # RelativeAttention), so trimming the oldest entries needs no reprefill
+        # - just drop them, the relative-distance math stays correct
+        if cache[0][0].shape[2] > MAX_SEQ_LEN:
+            cache = [(K[:, :, -MAX_SEQ_LEN:, :], V[:, :, -MAX_SEQ_LEN:, :]) for K, V in cache]
 
     print("generated notes:", len(generated))
 

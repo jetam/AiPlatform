@@ -27,7 +27,12 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 class MusicDataset(Dataset):
 
     def __init__(self, songs, seq_len, augment=True):
-        self.songs = songs
+        # a song shorter than seq_len can't produce a single window - drop it
+        # instead of letting torch.randint(0, <=0, ...) crash training later
+        self.songs = [s for s in songs if len(s) > seq_len]
+        dropped = len(songs) - len(self.songs)
+        if dropped:
+            print(f"MusicDataset: dropped {dropped} song(s) with <= {seq_len} notes", flush=True)
         self.seq_len = seq_len
         self.augment = augment
 
@@ -104,7 +109,7 @@ class MusicRNN(BaseMusicModel):
         self.dt_head = nn.Linear(hidden_size, dt_vocab)
         self.sus_head = nn.Linear(hidden_size, sus_vocab)
 
-    def forward(self, notes, others, times):
+    def forward(self, notes, others, times, hidden=None):
 
         pc = notes % 12
         octv = notes // 12
@@ -126,7 +131,7 @@ class MusicRNN(BaseMusicModel):
         x = self.event_proj(x) # Projection into model space
         x = self.dropout(x)
 
-        out, _ = self.rnn(x) # shape: (16, 64, 256) (batch, seq len, hidden size)
+        out, hidden = self.rnn(x, hidden) # out shape: (batch, seq_len, hidden_size)
         out = self.dropout(out)
 
         return (
@@ -135,7 +140,7 @@ class MusicRNN(BaseMusicModel):
             self.vel_head(out),
             self.dt_head(out),
             self.sus_head(out)
-        )
+        ), hidden
 
     def fineTune(self, song):
         fineTune(self, song)
@@ -146,7 +151,7 @@ class MusicRNN(BaseMusicModel):
 
 
 def _rnn_losses(model, notes, others, times, ce):
-    pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
+    (pc_logits, oct_logits, vel_logits, dt_logits, sus_logits), _ = model(notes, others, times)
 
     pc = notes % 12
     octv = notes // 12
@@ -308,7 +313,7 @@ def fineTune(model, song, seq_len=64, epochs=4, batch_size=16, lr=3e-5):
             optimizer.zero_grad()
 
             with torch.amp.autocast('cuda', enabled=use_amp):
-                pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(notes, others, times)
+                (pc_logits, oct_logits, vel_logits, dt_logits, sus_logits), _ = model(notes, others, times)
 
                 # split ground truth
                 pc = notes % 12
@@ -372,13 +377,15 @@ def compose(model, seedSong):
         probs = torch.softmax(logits / temp, dim=-1)
         return torch.multinomial(probs, 1).item() # Turns raw model scores into probabilities
 
+    # prime the LSTM once on the seed context, keeping only its final hidden
+    # state - each further step feeds just the new note through that carried
+    # state instead of re-running the whole history from scratch every time
+    n = torch.tensor([seq_notes], dtype=torch.long, device=DEVICE)
+    o = torch.tensor([seq_others], dtype=torch.long, device=DEVICE)
+    t = torch.tensor([seq_times], dtype=torch.float32, device=DEVICE)
+    (pc_logits, oct_logits, vel_logits, dt_logits, sus_logits), hidden = model(n, o, t)
+
     while len(generated) < target_notes:
-
-        n = torch.tensor([seq_notes], dtype=torch.long, device=DEVICE)
-        o = torch.tensor([seq_others], dtype=torch.long, device=DEVICE)
-        t = torch.tensor([seq_times], dtype=torch.float32, device=DEVICE)
-
-        pc_logits, oct_logits, vel_logits, dt_logits, sus_logits = model(n, o, t) # predicted distributions for each time step
 
         pc = sample(pc_logits[:, -1])
         octv = sample(oct_logits[:, -1])
@@ -392,15 +399,11 @@ def compose(model, seedSong):
 
         time_value = min(1.0, len(generated) / target_notes)
 
-        seq_notes.append(next_note) # update context
-        seq_others.append([vel, dt, sus])
-        seq_times.append([time_value])
+        n = torch.tensor([[next_note]], dtype=torch.long, device=DEVICE)
+        o = torch.tensor([[[vel, dt, sus]]], dtype=torch.long, device=DEVICE)
+        t = torch.tensor([[[time_value]]], dtype=torch.float32, device=DEVICE)
 
-        # keep context stable
-        if len(seq_notes) > SEQUENCE_LENGTH:
-            seq_notes = seq_notes[-SEQUENCE_LENGTH:]
-            seq_others = seq_others[-SEQUENCE_LENGTH:]
-            seq_times = seq_times[-SEQUENCE_LENGTH:]
+        (pc_logits, oct_logits, vel_logits, dt_logits, sus_logits), hidden = model(n, o, t, hidden=hidden)
 
     print("generated notes:", len(generated))
 

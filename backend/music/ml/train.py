@@ -9,8 +9,8 @@ from . import music_transformerT2 as tr2
 MIDI_FILES_DIR = Path(__file__).resolve().parent.parent / "midiFiles"
 SONGS_DIRS = [
     MIDI_FILES_DIR / "midiFavourites",
-    MIDI_FILES_DIR / "piano-midi",
-    MIDI_FILES_DIR / "maestro" / "maestro-v3.0.0",
+    # MIDI_FILES_DIR / "piano-midi",
+    # MIDI_FILES_DIR / "maestro" / "maestro-v3.0.0",
 ]
 
 
