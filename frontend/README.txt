@@ -4,6 +4,8 @@ train models: python3 -m music.ml.train    // run from backend dir!
 
 pip install torch numpy mido python-rtmidi
 
+or: pip install torch numpy mido
+
 
 run servers with ./startServer.sh
 

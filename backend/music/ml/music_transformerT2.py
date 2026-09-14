@@ -333,6 +333,11 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
         val_dataset = MusicDataset(val_songs, augment=False)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=use_amp)
 
+    print(f"tr2 setup: {len(train_songs)} train songs ({len(dataset)} chunks), "
+          f"{len(val_songs)} val songs ({len(val_loader.dataset) if val_loader else 0} chunks), "
+          f"val_loader is None: {val_loader is None}", flush=True)
+    print(f"tr2 MODEL_DIR resolved to: {os.path.abspath(MODEL_DIR)}", flush=True)
+
     opt      = _make_optimizer(model, lr)
     scaler   = torch.amp.GradScaler('cuda', enabled=use_amp)
 
@@ -390,15 +395,22 @@ def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_s
             msg += f" | val loss {val_loss:.4f}"
 
         print(msg, flush=True)
+        print(f"  [checkpoint debug] val_loader is None: {val_loader is None}, "
+              f"val_loss: {val_loss!r}, best_val_loss so far: {best_val_loss!r}, "
+              f"will_save_best: {val_loss is not None and val_loss < best_val_loss}", flush=True)
 
         if (epoch + 1) % checkpoint_every == 0 or epoch == epochs - 1:
             torch.save(model.state_dict(), latest_path)
-            print(f"  -> checkpoint saved to {latest_path}", flush=True)
+            print(f"  -> checkpoint saved to {latest_path} "
+                  f"(exists: {os.path.isfile(latest_path)}, "
+                  f"size: {os.path.getsize(latest_path) if os.path.isfile(latest_path) else 'N/A'} bytes)", flush=True)
 
         if val_loss is not None and val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), best_path)
-            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path}", flush=True)
+            print(f"  -> new best val loss {best_val_loss:.4f}, saved to {best_path} "
+                  f"(exists: {os.path.isfile(best_path)}, "
+                  f"size: {os.path.getsize(best_path) if os.path.isfile(best_path) else 'N/A'} bytes)", flush=True)
 
     return model
 
