@@ -316,7 +316,7 @@ def evaluate(model, loader, use_amp):
     return total / max(1, count)
 
 
-def train(model, songs, epochs=6, batch_size=8, lr=3e-4, warmup_steps=500, val_split=0.1, checkpoint_every=1):
+def train(model, songs, epochs=6, batch_size=8, lr=1.5e-4, warmup_steps=1500, val_split=0.1, checkpoint_every=1):
     use_amp  = torch.cuda.is_available()
     model    = model.to(DEVICE)
 
