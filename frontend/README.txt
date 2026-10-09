@@ -6,6 +6,11 @@ pip install torch numpy mido python-rtmidi
 
 or: pip install torch numpy mido
 
+!scp -r trained_models matej@192.168.178.76:~/Downloads/Traineddd
+zip -r /content/my_directory.zip /content/my_directory
+from google.colab import files
+files.download('/tr2.zip')
+
 
 run servers with ./startServer.sh
 

@@ -18,13 +18,23 @@ class ModelNames(Enum):
     def allModels(cls):
         return [model.value for model in cls]
 
+class ComposerStateError(Exception):
+    """Raised when a Composer method is called before its required prior step."""
+    pass
+
 class Composer:
     def __init__(self):
         self.currentModelName = "Not Selected"
+        self.currentModel = None
+        self.currentSong = None
+        self.maxTime = None
         # self.currentModelName = ModelNames.TRANSFORMER2
         # self.currentModel = self.setModel(self.currentModelName)
 
     def selectModel(self, model: ModelNames):
+        if self.currentSong is None:
+            raise ComposerStateError("No song uploaded yet. Upload a MIDI file before selecting a model.")
+
         self.currentModelName = model
         self.currentModel = self.setModel(self.currentModelName)
         self.currentModel.fineTune(self.currentSong) # todo: also store tempo of the song in composer. the generated song should have the same tempo
@@ -64,6 +74,11 @@ class Composer:
         self.currentSong = parser.midi_data
 
     def generateMusic(self):
+        if self.currentModel is None:
+            raise ComposerStateError("No model selected yet. Select a model before generating.")
+        if self.currentSong is None:
+            raise ComposerStateError("No song uploaded yet. Upload a MIDI file before generating.")
+
         print("Generating Music begin")
         generatedNotes = self.currentModel.generate(self.currentSong) #, maxTime=self.maxTime)
         parser = Parser.MidiParser()

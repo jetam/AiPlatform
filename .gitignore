@@ -1,0 +1,13 @@
+# Environment
+.env
+.env.*
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+*.log
+
+.idea/
+
