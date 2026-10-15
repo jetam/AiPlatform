@@ -1,6 +1,4 @@
-# Matches the current startStaticServer.sh exactly -- a plain static file
-# server. Replacing this with nginx (and unifying it with the backend behind
-# one port/reverse proxy) is Stage 6, intentionally not done here.
+# Matches startStaticServer.sh
 FROM python:3.10-slim
 
 WORKDIR /app/frontend

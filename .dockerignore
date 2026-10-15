@@ -10,7 +10,5 @@ __pycache__/
 cmake-build-debug/
 node_modules/
 
-# Trained models are mounted as a volume at runtime, not baked into the
-# image -- see docker-compose.yml. Keeping them out of the build context
-# also keeps image builds fast (these are multi-hundred-MB files).
+# Trained models are mounted as a volume at runtime
 backend/music/trained_models/

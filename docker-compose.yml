@@ -6,19 +6,11 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      # Trained model weights live on the host, not baked into the image --
-      # survives image rebuilds and lets fine-tuned models persist.
+      # Trained models on the host, not baked into the image
       - ./backend/music/trained_models:/app/backend/music/trained_models
     environment:
       - PYTHONUNBUFFERED=1
-    # NOTE: the session pool from Stage 3 (backend/music/services/session_pool.py)
-    # is in-memory only (a plain Python dict in the running process) -- there is
-    # no on-disk session state to mount. A container restart clears all active
-    # sessions, same as restarting the bare uvicorn process would. If that needs
-    # to survive restarts later, that's a design change (e.g. Redis), not a volume.
-    # No NVIDIA GPU on this machine -- commented out so `docker compose up` can
-    # actually run here (torch falls back to CPU, slow but functional). Uncomment
-    # on the eventual GPU machine (needs nvidia-container-toolkit installed there).
+   
     # deploy:
     #   resources:
     #     reservations:
