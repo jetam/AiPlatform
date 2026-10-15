@@ -1,0 +1,16 @@
+.git/
+.idea/
+.claude/
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.log
+cmake-build-debug/
+node_modules/
+
+# Trained models are mounted as a volume at runtime, not baked into the
+# image -- see docker-compose.yml. Keeping them out of the build context
+# also keeps image builds fast (these are multi-hundred-MB files).
+backend/music/trained_models/
