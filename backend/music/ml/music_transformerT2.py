@@ -489,7 +489,7 @@ def compose(model, seedSong, temperature=1.0, top_p=0.9, rep_penalty=1.2):
     print( "compose begin" )
     model.eval()
 
-    target_notes = len(seedSong)
+    target_notes = len(seedSong) # todo: put a limit on here. max 3000
     seedSong = seedSong[:SEED_NOTES]
 
     tokens_per_note = len(TYPE_CYCLE)

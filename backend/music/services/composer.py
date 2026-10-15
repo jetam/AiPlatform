@@ -85,6 +85,3 @@ class Composer:
         convertedNotes = parser.convertNotes(generatedNotes, self.maxTime)
         print("Generating Music end")
         return midi_tester.midiToBytes(convertedNotes)
-
-
-composer = Composer()
